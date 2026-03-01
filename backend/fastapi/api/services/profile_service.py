@@ -26,6 +26,7 @@ from ..models import (
     UserStrengths,
     UserEmotionalPatterns
 )
+from ..utils.timestamps import normalize_utc_iso
 from .db_error_handler import safe_db_query, DatabaseConnectionError
 import logging
 
@@ -452,7 +453,7 @@ class ProfileService:
             "user": {
                 "id": user.id,
                 "username": user.username,
-                "created_at": user.created_at,
+                "created_at": normalize_utc_iso(user.created_at, fallback_now=True),
                 "last_login": user.last_login,
                 "onboarding_completed": user.onboarding_completed or False
             },

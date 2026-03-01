@@ -18,6 +18,7 @@ from .audit_service import AuditService
 from ..utils.db_transaction import transactional, retry_on_transient
 from ..utils.security import get_password_hash, verify_password, is_hashed, check_password_history
 from ..utils.race_condition_protection import with_row_lock
+from ..utils.timestamps import utc_now_iso
 from ..models import User, LoginAttempt, PersonalProfile, RefreshToken, PasswordHistory
 from ..constants.security_constants import PASSWORD_HISTORY_LIMIT, REFRESH_TOKEN_EXPIRE_DAYS
 from .db_router import mark_write
@@ -729,7 +730,7 @@ class AuthService:
             username=username,
             password_hash="",
             oauth_sub=sub,
-            created_at=datetime.now(timezone.utc).isoformat()
+            created_at=utc_now_iso()
         )
         self.db.add(user)
         await self.db.flush()

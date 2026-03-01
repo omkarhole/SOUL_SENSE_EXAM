@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 
 # Import models from models module
 from ..models import User, UserSettings, MedicalProfile, PersonalProfile, UserStrengths, UserEmotionalPatterns, Score, UserSession
+from ..utils.timestamps import utc_now_iso
 from .db_error_handler import safe_db_query, DatabaseConnectionError
 import bcrypt
 import logging
@@ -112,7 +113,7 @@ class UserService:
         new_user = User(
             username=username,
             password_hash=password_hash,
-            created_at=datetime.now(UTC).isoformat()
+            created_at=utc_now_iso()
         )
 
         try:

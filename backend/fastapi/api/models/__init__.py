@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine, Connection
 from typing import List, Optional, Any, Dict, Tuple, Union
 from datetime import datetime, timedelta, UTC
 import logging
+from ..utils.timestamps import normalize_utc_iso, utc_now, utc_now_iso
 
 try:
     from ..services.encryption_service import EncryptedString
@@ -37,7 +38,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     oauth_sub = Column(String, nullable=True, unique=True)  # OAuth subject identifier
-    created_at = Column(String, default=lambda: datetime.now(UTC).isoformat())
+    created_at = Column(String, default=utc_now_iso)
     last_login = Column(String, nullable=True)
     
     # PR 1: Security & Lifecycle Fields
@@ -305,7 +306,7 @@ class OutboxEvent(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     topic = Column(String, default="audit_trail", nullable=False)
     payload = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     status = Column(String, default='pending', index=True) # pending, processed, failed
     processed_at = Column(DateTime, nullable=True)
     retry_count = Column(Integer, default=0)
@@ -338,8 +339,8 @@ class GDPRScrubLog(Base):
     retry_count = Column(Integer, default=0)
     last_error = Column(Text, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 class AnalyticsEvent(Base):
     """Track user behavior events (e.g., signup drop-off).
@@ -419,7 +420,7 @@ class OTP(Base):
     is_used = Column(Boolean, default=False, index=True)
     attempts = Column(Integer, default=0)
     is_locked = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     user = relationship("User", back_populates="otps")
 
 class PasswordHistory(Base):
@@ -430,7 +431,7 @@ class PasswordHistory(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     user = relationship("User", back_populates="password_history")
 
 class RefreshToken(Base):
@@ -443,7 +444,7 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     token_hash = Column(String, unique=True, index=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
     is_revoked = Column(Boolean, default=False, index=True)
     user = relationship("User", back_populates="refresh_tokens")
@@ -467,7 +468,7 @@ class UserSession(Base):
     user_agent = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     last_activity = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     
     user = relationship("User", back_populates="sessions")
     
@@ -504,7 +505,7 @@ class UserSettings(Base):
     
     # Crisis support settings (Integration with emotional support features)
     crisis_support_preference = Column(Boolean, default=True)
-    updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+    updated_at = Column(String, default=utc_now_iso)
     user = relationship("User", back_populates="settings")
 
 class MedicalProfile(Base):
@@ -544,7 +545,7 @@ class PersonalProfile(Base):
     sleep_hours = Column(Float, nullable=True)
     exercise_freq = Column(String, nullable=True)
     dietary_patterns = Column(String, nullable=True)
-    last_updated = Column(String, default=lambda: datetime.utcnow().isoformat())
+    last_updated = Column(String, default=utc_now_iso)
     user = relationship("User", back_populates="personal_profile")
 
 class UserStrengths(Base):
@@ -558,7 +559,7 @@ class UserStrengths(Base):
     communication_preference = Column(String, nullable=True)
     primary_help_area = Column(String, nullable=True)
     relationship_stress = Column(Integer, nullable=True)
-    last_updated = Column(String, default=lambda: datetime.utcnow().isoformat())
+    last_updated = Column(String, default=utc_now_iso)
     user = relationship("User", back_populates="strengths")
 
 class UserEmotionalPatterns(Base):
@@ -1121,7 +1122,7 @@ class ExportRecord(Base):
     data_types = Column(Text, nullable=True)
     is_encrypted = Column(Boolean, default=False, nullable=False)
     status = Column(String, default='completed', nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=True)
     user = relationship("User", back_populates="export_records")
 
@@ -1237,7 +1238,7 @@ class BackgroundJob(Base):
     params = Column(Text, nullable=True)  # JSON string of task parameters
     result = Column(Text, nullable=True)  # JSON string of task result
     error_message = Column(Text, nullable=True)  # Error details if failed
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
     started_at = Column(DateTime, nullable=True)  # When task started processing
     completed_at = Column(DateTime, nullable=True)  # When task finished
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -1324,7 +1325,7 @@ class UserConsent(Base):
     revoked_at = Column(DateTime, nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     def to_dict(self):
@@ -1351,6 +1352,12 @@ logging.basicConfig(level=logging.INFO)
 # ==================== CACHE INVALIDATION EVENTS ====================
 
 from sqlalchemy import event
+
+
+@event.listens_for(User, 'before_insert')
+@event.listens_for(User, 'before_update')
+def normalize_user_created_at(mapper, connection, target):
+    target.created_at = normalize_utc_iso(getattr(target, 'created_at', None), fallback_now=True)
 
 @event.listens_for(User, 'after_update')
 def receive_after_update_user(mapper, connection, target):

@@ -31,7 +31,7 @@ class TestTasksAPI:
     @pytest.fixture
     def mock_job(self):
         """Create a mock background job."""
-        from datetime import datetime
+        from datetime import UTC, datetime
         job = Mock()
         job.job_id = "test-job-uuid-123"
         job.user_id = 1
@@ -41,20 +41,20 @@ class TestTasksAPI:
         job.params = '{"format": "pdf"}'
         job.result = None
         job.error_message = None
-        job.created_at = datetime.utcnow()
+        job.created_at = datetime.now(UTC)
         job.started_at = None
         job.completed_at = None
-        job.updated_at = datetime.utcnow()
+        job.updated_at = datetime.now(UTC)
         return job
     
     @pytest.fixture
     def mock_completed_job(self, mock_job):
         """Create a mock completed job."""
-        from datetime import datetime
+        from datetime import UTC, datetime
         mock_job.status = "completed"
         mock_job.progress = 100
         mock_job.result = '{"filepath": "/exports/test.pdf", "export_id": "export-123"}'
-        mock_job.completed_at = datetime.utcnow()
+        mock_job.completed_at = datetime.now(UTC)
         return mock_job
     
     def test_async_export_returns_202(self, mock_user):
@@ -101,6 +101,7 @@ class TestTasksAPI:
                 assert data["job_id"] == mock_job.job_id
                 assert data["status"] == "pending"
                 assert data["task_type"] == "export_pdf"
+                assert data["created_at"].endswith("+00:00")
     
     def test_get_task_not_found(self, mock_user):
         """Test 404 when task not found."""
@@ -157,6 +158,7 @@ class TestTasksAPI:
                 data = response.json()
                 assert data["total"] == 1
                 assert len(data["tasks"]) == 1
+                assert data["tasks"][0]["created_at"].endswith("+00:00")
     
     def test_list_tasks_with_filter(self, mock_user, mock_job):
         """Test listing tasks with status filter."""

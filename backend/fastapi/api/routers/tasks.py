@@ -18,6 +18,7 @@ from ..services.background_task_service import (
 )
 from ..models import User, BackgroundJob
 from .auth import get_current_user
+from ..utils.timestamps import normalize_utc_iso
 from app.core import NotFoundError, ValidationError
 from pydantic import BaseModel, Field
 
@@ -97,9 +98,9 @@ async def get_task_status(
         progress=task.progress or 0,
         result=_parse_json_field(task.result),
         error_message=task.error_message,
-        created_at=task.created_at.isoformat() if task.created_at else None,
-        started_at=task.started_at.isoformat() if task.started_at else None,
-        completed_at=task.completed_at.isoformat() if task.completed_at else None,
+        created_at=normalize_utc_iso(task.created_at),
+        started_at=normalize_utc_iso(task.started_at),
+        completed_at=normalize_utc_iso(task.completed_at),
     )
 
 
@@ -142,9 +143,9 @@ async def list_user_tasks(
             progress=task.progress or 0,
             result=_parse_json_field(task.result),
             error_message=task.error_message,
-            created_at=task.created_at.isoformat() if task.created_at else None,
-            started_at=task.started_at.isoformat() if task.started_at else None,
-            completed_at=task.completed_at.isoformat() if task.completed_at else None,
+            created_at=normalize_utc_iso(task.created_at),
+            started_at=normalize_utc_iso(task.started_at),
+            completed_at=normalize_utc_iso(task.completed_at),
         )
         for task in tasks
     ]

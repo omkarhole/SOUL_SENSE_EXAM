@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, status, UploadFile, File, Request
 from pathlib import Path
 from ..utils.limiter import limiter
+from ..utils.timestamps import normalize_utc_iso
 
 from ..schemas import (
     UserResponse,
@@ -58,7 +59,7 @@ async def get_current_user_info(
     return UserResponse(
         id=current_user.id,
         username=current_user.username,
-        created_at=current_user.created_at,
+        created_at=normalize_utc_iso(current_user.created_at, fallback_now=True),
         last_login=current_user.last_login
     )
 
@@ -107,7 +108,7 @@ async def update_current_user(
     return UserResponse(
         id=updated_user.id,
         username=updated_user.username,
-        created_at=updated_user.created_at,
+        created_at=normalize_utc_iso(updated_user.created_at, fallback_now=True),
         last_login=updated_user.last_login
     )
 
@@ -162,7 +163,7 @@ async def list_users(
         UserResponse(
             id=user.id,
             username=user.username,
-            created_at=user.created_at,
+            created_at=normalize_utc_iso(user.created_at, fallback_now=True),
             last_login=user.last_login
         )
         for user in users
@@ -185,7 +186,7 @@ async def get_user(
     return UserResponse(
         id=user.id,
         username=user.username,
-        created_at=user.created_at,
+        created_at=normalize_utc_iso(user.created_at, fallback_now=True),
         last_login=user.last_login
     )
 

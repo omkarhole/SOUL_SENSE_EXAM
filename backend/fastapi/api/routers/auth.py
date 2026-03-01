@@ -14,6 +14,7 @@ from ..services.db_router import get_db
 from ..services.auth_service import AuthService
 from ..services.captcha_service import captcha_service
 from ..utils.network import get_real_ip
+from ..utils.timestamps import normalize_utc_iso
 from ..constants.security_constants import REFRESH_TOKEN_EXPIRE_DAYS
 from ..models import User
 from ..utils.limiter import limiter
@@ -102,7 +103,7 @@ async def get_current_user(request: Request, token: Annotated[str, Depends(oauth
         user_data = {
             "id": user.id,
             "username": user.username,
-            "created_at": user.created_at,
+            "created_at": normalize_utc_iso(user.created_at, fallback_now=True),
             "last_login": user.last_login,
             "is_active": user.is_active,
             "is_deleted": user.is_deleted,
@@ -232,7 +233,7 @@ async def login(
         username=user.username,
         email=user.personal_profile.email if user.personal_profile else None,
         id=user.id,
-        created_at=user.created_at,
+        created_at=normalize_utc_iso(user.created_at, fallback_now=True),
         warnings=(
             [{
                 "code": "MULTIPLE_SESSIONS_ACTIVE",
@@ -303,7 +304,7 @@ async def verify_2fa(
         username=user.username,
         email=user.personal_profile.email if user.personal_profile else None,
         id=user.id,
-        created_at=user.created_at,
+        created_at=normalize_utc_iso(user.created_at, fallback_now=True),
         warnings=(
             [{
                 "code": "MULTIPLE_SESSIONS_ACTIVE",
@@ -396,7 +397,11 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
-    return UserResponse(id=current_user.id, username=current_user.username, created_at=current_user.created_at)
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        created_at=normalize_utc_iso(current_user.created_at, fallback_now=True),
+    )
 
 @router.post("/password-reset/initiate")
 async def initiate_password_reset(
@@ -595,7 +600,7 @@ async def oauth_login(
             username=user.username,
             email=getattr(user.personal_profile, 'email', None) if user.personal_profile else user_info.get("email"),
             id=user.id,
-            created_at=user.created_at,
+            created_at=normalize_utc_iso(user.created_at, fallback_now=True),
             warnings=[],
             onboarding_completed=getattr(user, "onboarding_completed", False),
             is_admin=getattr(user, "is_admin", False)

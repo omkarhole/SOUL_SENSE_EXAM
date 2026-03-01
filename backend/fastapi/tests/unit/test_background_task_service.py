@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import json
 
 from api.services.background_task_service import (
@@ -47,10 +47,10 @@ class TestBackgroundTaskService:
         job.params = None
         job.result = None
         job.error_message = None
-        job.created_at = datetime.utcnow()
+        job.created_at = datetime.now(UTC)
         job.started_at = None
         job.completed_at = None
-        job.updated_at = datetime.utcnow()
+        job.updated_at = datetime.now(UTC)
         return job
     
     def test_create_task_success(self, mock_db):
