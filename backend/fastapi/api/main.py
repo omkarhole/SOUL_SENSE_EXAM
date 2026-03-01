@@ -3,9 +3,10 @@ import asyncio
 import logging
 import uuid
 import time
+import traceback
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 # Triggering reload for new community routes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -56,16 +57,26 @@ except Exception as e:
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown events."""
     logger = logging.getLogger("api.lifespan")
-    
+
     # STARTUP LOGIC
     logger.info("LIFESPAN BOOT STARTED")
-    
+
     app.state.settings = settings
-    
+
     # Generate a unique instance ID for this server session
     # All JWTs will include this ID; tokens from previous instances are rejected
     app.state.server_instance_id = str(uuid.uuid4())
     logger.info(f"Server instance ID: {app.state.server_instance_id}")
+
+    # Initialize FD Resource Manager and Event Loop Health Monitor (#1183)
+    try:
+        from event_loop_health_monitor import init_fastapi_monitor
+        fd_monitor = init_fastapi_monitor(app)
+        app.state.fd_monitor = fd_monitor
+        print("[OK] FD Resource Manager and Event Loop Health Monitor initialized")
+    except Exception as e:
+        logger.warning(f"FD monitoring initialization failed: {e}")
+        print(f"[WARNING] FD monitoring not available: {e}")
     
     # Initialize database tables
     try:
@@ -206,6 +217,13 @@ async def lifespan(app: FastAPI):
     
     # SHUTDOWN LOGIC
     logger.info("LIFESPAN TEARDOWN STARTED")
+
+    # Stop FD Resource Manager and Event Loop Health Monitor (#1183)
+    if hasattr(app.state, 'fd_monitor'):
+        logger.info("Shutting down FD Resource Manager and Event Loop Health Monitor...")
+        await app.state.fd_monitor.health_monitor.stop_monitoring()
+        app.state.fd_monitor.fd_manager.shutdown()
+        logger.info("FD monitoring shutdown successfully")
     
     # Cancel background tasks
     if hasattr(app.state, 'purge_task'):

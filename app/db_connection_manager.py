@@ -3,6 +3,7 @@ Database Connection Manager for TIME_WAIT Socket Exhaustion Prevention.
 
 Implements connection pooling and reuse to prevent TCP TIME_WAIT socket exhaustion
 from rapid reconnections. Uses persistent connections with proper lifecycle management.
+Integrates with FD resource manager to prevent epoll event loop exhaustion.
 """
 
 import sqlite3
@@ -13,6 +14,14 @@ from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 import os
 from poison_resistant_lock import PoisonResistantRLock, register_lock
+
+# Import FD resource manager for tracking database file descriptors
+try:
+    from fd_resource_manager import get_fd_manager, FDType
+    _fd_manager_available = True
+except ImportError:
+    _fd_manager_available = False
+    logger.warning("FD resource manager not available, FD tracking disabled")
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +67,28 @@ class ConnectionPool:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=1000")  # 1MB cache
         conn.execute("PRAGMA temp_store=MEMORY")
+
+        # Track the database file descriptor if FD manager is available
+        if _fd_manager_available:
+            try:
+                # Get the file descriptor for the database file
+                # Note: SQLite connections don't directly expose FDs, but we can track the file
+                fd_manager = get_fd_manager()
+                # Track the database file itself (not the connection FD)
+                if os.path.exists(self.db_path):
+                    db_fd = os.open(self.db_path, os.O_RDONLY)
+                    fd_manager.register_fd(
+                        db_fd,
+                        FDType.FILE,
+                        f"db_connection_pool_{id(self)}",
+                        db_path=self.db_path,
+                        connection_type="sqlite"
+                    )
+                    # Store FD in connection for cleanup
+                    conn._tracked_fd = db_fd
+                    os.close(db_fd)  # Close our reference, SQLite keeps its own
+            except Exception as e:
+                logger.debug(f"Could not track database FD: {e}")
 
         return conn
 
@@ -131,6 +162,12 @@ class ConnectionPool:
         """Return a connection to the pool."""
         if self._closed:
             try:
+                # Unregister FD if tracked
+                if _fd_manager_available and hasattr(conn, '_tracked_fd'):
+                    try:
+                        get_fd_manager().unregister_fd(conn._tracked_fd)
+                    except Exception as e:
+                        logger.debug(f"Could not unregister FD: {e}")
                 conn.close()
             except:
                 pass
@@ -141,6 +178,12 @@ class ConnectionPool:
                 self._pool.append(conn)
             else:
                 try:
+                    # Unregister FD if tracked
+                    if _fd_manager_available and hasattr(conn, '_tracked_fd'):
+                        try:
+                            get_fd_manager().unregister_fd(conn._tracked_fd)
+                        except Exception as e:
+                            logger.debug(f"Could not unregister FD: {e}")
                     conn.close()
                 except:
                     pass
@@ -151,6 +194,12 @@ class ConnectionPool:
             self._closed = True
             for conn in self._pool:
                 try:
+                    # Unregister FD if tracked
+                    if _fd_manager_available and hasattr(conn, '_tracked_fd'):
+                        try:
+                            get_fd_manager().unregister_fd(conn._tracked_fd)
+                        except Exception as e:
+                            logger.debug(f"Could not unregister FD: {e}")
                     conn.close()
                 except:
                     pass
