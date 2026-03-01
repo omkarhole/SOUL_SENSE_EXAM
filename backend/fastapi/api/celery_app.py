@@ -4,13 +4,14 @@ import multiprocessing
 import logging
 from celery import Celery
 from api.config import get_settings_instance
+from api.utils.cpu_affinity import get_optimal_worker_count
 
 logger = logging.getLogger(__name__)
 
 # Set multiprocessing start method to 'spawn' to prevent zombie processes
 multiprocessing.set_start_method('spawn', force=True)
 
-# Handle SIGCHLD to reap zombie processes
+# Handle SIGCHLD to reap zombie processes (Unix/Linux only)
 def sigchld_handler(signum, frame):
     """Reap zombie processes to prevent accumulation."""
     try:
@@ -23,8 +24,11 @@ def sigchld_handler(signum, frame):
         # No child processes
         pass
 
-# Register the signal handler
-signal.signal(signal.SIGCHLD, sigchld_handler)
+# Register the signal handler (only on Unix/Linux)
+if hasattr(signal, 'SIGCHLD'):
+    signal.signal(signal.SIGCHLD, sigchld_handler)
+else:
+    logger.debug("SIGCHLD not available on this platform (Windows)")
 
 settings = get_settings_instance()
 
@@ -54,6 +58,8 @@ celery_app.conf.update(
     task_time_limit=3600,           # Kill tasks that run longer than 1 hour
     task_soft_time_limit=3300,      # Soft time limit 55 minutes
     worker_disable_rate_limits=False,  # Enable rate limiting
+    worker_concurrency=get_optimal_worker_count(),  # <-- ADD THIS
+    worker_pool="prefork",  # <-- ADD THIS (needed for affinity binding)
 )
 
 from celery.schedules import crontab
