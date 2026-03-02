@@ -14,6 +14,9 @@ from __future__ import annotations
 import logging
 import time
 import functools
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Callable, Any, TypeVar
+
 from contextlib import contextmanager, asynccontextmanager
 from typing import Generator, Callable, Any, TypeVar, AsyncGenerator
 
@@ -41,26 +44,27 @@ def _is_transient(exc: Exception) -> bool:
     return False
 
 
-@contextmanager
-def transactional(db: Session) -> Generator[Session, None, None]:
+@asynccontextmanager
+async def transactional(db: AsyncSession) -> AsyncGenerator[AsyncSession, None]:
     """
-    Yield *db* inside an atomic block.
-
-    Commits on success, rolls back on any exception, then re-raises.
-
-    Nested usage is safe – SQLAlchemy uses SAVEPOINTs automatically.
+    Asynchronous context manager for atomic database transactions.
+    
+    Usage:
+        async with transactional(db) as session:
+            # perform operations
+            await session.flush()
     """
+    if not isinstance(db, AsyncSession):
+        raise TypeError(f"Expected AsyncSession, got {type(db).__name__}")
+        
     try:
+        # Start a nested transaction or just use the current one
+        # AsyncSession handles transaction state automatically
         yield db
-        db.commit()
-        logger.debug("Transaction committed.")
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error("SQLAlchemy error – transaction rolled back: %s", exc, exc_info=True)
-        raise
-    except Exception as exc:
-        db.rollback()
-        logger.error("Unexpected error – transaction rolled back: %s", exc, exc_info=True)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Transaction failed, rolling back: {e}")
         raise
 
 

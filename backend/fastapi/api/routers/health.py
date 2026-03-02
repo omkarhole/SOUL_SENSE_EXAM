@@ -147,13 +147,41 @@ def get_diagnostics() -> Dict[str, Any]:
         "python_version": sys.version.split()[0],
         "pid": os.getpid(),
     }
+    
+    # Memory and Resource usage (if psutil available)
 
     try:
         import psutil
+        import platform
         process = psutil.Process(os.getpid())
+        
         diagnostics["memory_mb"] = round(process.memory_info().rss / (1024 * 1024), 2)
         diagnostics["cpu_percent"] = process.cpu_percent(interval=0.1)
+        
+        # Resource exhaustion monitoring (FD/Handle leaks)
+        if platform.system() == "Windows":
+            # On Windows, we track 'handles'
+            diagnostics["open_handles"] = process.num_handles()
+        else:
+            # On Linux/macOS, we track 'file descriptors'
+            try:
+                diagnostics["open_file_descriptors"] = process.num_fds()
+            except AttributeError:
+                # Fallback for platforms where num_fds() is missing
+                diagnostics["open_files"] = len(process.open_files())
+                diagnostics["open_connections"] = len(process.connections())
+
+        # FD Threshold Warning: Log if we're approaching limits
+        # Typical default limit is 1024 on Linux
+        fd_count = diagnostics.get("open_file_descriptors") or diagnostics.get("open_handles", 0)
+        if fd_count > 800:
+             logger.warning(f"HIGH RESOURCE USAGE: Process {os.getpid()} is using {fd_count} handles/FDs", extra={"fd_count": fd_count})
+             
     except ImportError:
+        logger.debug("psutil not available for diagnostics")
+    except Exception as e:
+        logger.warning(f"Failed to gather diagnostics: {e}")
+    
         pass
 
     # Add FD monitoring diagnostics if available
@@ -223,6 +251,7 @@ async def readiness_check(
     if cached and not full:
         return HealthResponse(**cached)
     
+    # Perform health checks
     db_status = await check_database(db)
     
     services = {"database": db_status}
@@ -250,6 +279,12 @@ async def readiness_check(
 
 @router.get("/startup", response_model=HealthResponse, tags=["Health"])
 async def startup_check(db: AsyncSession = Depends(get_db)) -> HealthResponse:
+    """
+    Startup probe - checks if the application has completed initialization.
+    
+    Use this for Kubernetes startupProbe to give the app time to initialize.
+    """
+    # For startup, we just check if we can connect to DB
     """Startup probe - checks if the application has completed initialization."""
     db_status = await check_database(db)
     

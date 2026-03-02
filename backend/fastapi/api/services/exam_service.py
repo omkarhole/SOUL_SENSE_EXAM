@@ -30,19 +30,23 @@ except ImportError:
 
 logger = logging.getLogger("api.exam")
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, insert, update
+
 class ExamService:
     """
-    Service for handling Exam write operations via API with strict business logic validation.
+    Service for handling Exam write operations via API with strict business logic validation (Async).
     """
 
-    EXAM_DURATION_MINUTES = 60  # Maximum time allowed for an exam
+    EXAM_DURATION_MINUTES = 60
 
     @staticmethod
+    async def start_exam(db: AsyncSession, user: User) -> str:
     async def start_exam(db: AsyncSession, user: User):
         """
-        Initiates a new exam session, persists it to DB, and returns session_id.
-        Prevents multiple active sessions if necessary (policy decision).
+        Initiates a new exam session (Async).
         """
+        # 1. Check for existing active sessions
         # 1. Check for existing active sessions to prevent 'multiple attempts' bypass
         # (Optional: allow resumed sessions if they haven't expired)
         from sqlalchemy import select
@@ -90,6 +94,7 @@ class ExamService:
 
     @staticmethod
     async def _get_valid_session(db: AsyncSession, user_id: int, session_id: str, allowed_statuses: List[str]) -> ExamSession:
+        """Helper to fetch and validate an exam session (Async)."""
         """Helper to fetch and validate an exam session."""
         from sqlalchemy import select
         stmt = select(ExamSession).filter(ExamSession.session_id == session_id)
@@ -120,11 +125,11 @@ class ExamService:
                 f"Invalid workflow sequence. Current status: {session.status}"
             )
 
-        # Check for expiration (Workflow validation)
+        # Check for expiration
         if session.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
             logger.warning(f"Exam session expired: {session_id}", extra={"user_id": user_id})
             session.status = 'ABANDONED'
-            db.commit()
+            await db.commit()
             raise APIException(
                 ErrorCode.WFK_SESSION_EXPIRED, 
                 "Exam session has expired. Please start a new one."
@@ -134,6 +139,12 @@ class ExamService:
 
     @staticmethod
     async def save_response(db: AsyncSession, user: User, session_id: str, data: ExamResponseCreate):
+        """Saves a single question response (Async)."""
+        session = await ExamService._get_valid_session(db, user.id, session_id, ['STARTED', 'IN_PROGRESS'])
+
+        try:
+            if session.status == 'STARTED':
+                session.status = 'IN_PROGRESS'
         """Saves a single question response linked to the user and session."""
         try:
             # Use row-level locking to prevent concurrent duplicate submissions
@@ -192,6 +203,19 @@ class ExamService:
                 logger.error(f"Database integrity error for user_id={user.id}: {e}")
                 raise
         except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed to save response", extra={
+                "user_id": user.id,
+                "session_id": session_id,
+                "question_id": data.question_id,
+                "error": str(e)
+            }, exc_info=True)
+            raise e
+
+    @staticmethod
+    @retry_on_transient(retries=3)
+    async def save_score(db: AsyncSession, user: User, session_id: str, data: ExamResultCreate):
+        """Saves final exam score (Async)."""
             logger.error(f"Failed to save response for user_id={user.id}: {e}")
             await db.rollback()
             raise e
@@ -213,7 +237,6 @@ class ExamService:
         session = await ExamService._get_valid_session(db, user.id, session_id, ['SUBMITTED'])
 
         try:
-            # Check for Replay Attack (Already completed)
             if session.completed_at:
                 raise APIException(ErrorCode.WFK_REPLAY_ATTACK, "Exam score already recorded")
             # Use row-level locking on user_session to prevent concurrent score submissions
@@ -247,7 +270,6 @@ class ExamService:
             # Validate that all questions have been answered
             ExamService._validate_complete_responses(db, user, session_id, data.age)
 
-            # Encrypt reflection text for privacy
             reflection = data.reflection_text
             if CRYPTO_AVAILABLE and reflection:
                 try:
@@ -255,6 +277,7 @@ class ExamService:
                 except Exception as ce:
                     logger.error(f"Encryption failed for reflection: {ce}")
 
+            async with transactional(db) as tx_session:
             # ── ATOMIC WRITE ─────────────────────────────────────────────────
             # ── ATOMIC SCORE + GAMIFICATION WRITE ─────────────────────────────
             # All operations must succeed together to prevent inconsistent state
@@ -272,14 +295,18 @@ class ExamService:
                     detailed_age_group=data.detailed_age_group,
                     session_id=session_id
                 )
-                db.add(new_score)
-                db.flush()
+                tx_session.add(new_score)
+                await tx_session.flush()
 
-                # Update session state
                 session.status = 'COMPLETED'
                 session.completed_at = datetime.now(UTC)
                 await db.flush()  # Assign new_score.id before gamification
 
+                await GamificationService.award_xp(tx_session, user.id, 100, "Assessment completion")
+                await GamificationService.update_streak(tx_session, user.id, "assessment")
+                await GamificationService.check_achievements(tx_session, user.id, "assessment")
+
+            await db.refresh(new_score)
                 # Execute gamification updates atomically
                 try:
                     await GamificationService.award_xp(db, user.id, 100, "Assessment completion")
@@ -302,20 +329,33 @@ class ExamService:
 
         except Exception as e:
             if not isinstance(e, APIException):
-                logger.error(f"Failed to save exam score", extra={
-                    "user_id": user.id,
-                    "session_id": session_id,
-                    "error": str(e)
-                }, exc_info=True)
+                logger.error(f"Failed to save exam score: {e}")
             raise e
 
     @staticmethod
     async def mark_as_submitted(db: AsyncSession, user_id: int, session_id: str):
+        """Transitions a session to SUBMITTED state (Async)."""
         """Transitions a session to SUBMITTED state."""
         session = await ExamService._get_valid_session(db, user_id, session_id, ['STARTED', 'IN_PROGRESS'])
         session.status = 'SUBMITTED'
         session.submitted_at = datetime.now(UTC)
         await db.commit()
+
+    @staticmethod
+    async def get_history(db: AsyncSession, user: User, skip: int = 0, limit: int = 10) -> Tuple[List[Score], int]:
+        """Retrieves paginated history for user (Async)."""
+        limit = min(limit, 100)
+        stmt = select(Score).filter(Score.user_id == user.id)
+        
+        # Get count
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await db.execute(count_stmt)
+        total = total_result.scalar() or 0
+        
+        # Paginate
+        stmt = stmt.order_by(Score.timestamp.desc()).offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return list(result.scalars().all()), total
         logger.info(f"Exam session marked as SUBMITTED", extra={"user_id": user_id, "session_id": session_id})
 
     @staticmethod
