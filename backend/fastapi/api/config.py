@@ -49,6 +49,11 @@ class BaseAppSettings(BaseSettings):
     redis_db: int = Field(default=0, description="Redis database index")
     redis_url: Optional[str] = Field(default=None, description="Redis URL (if set, overrides individual host/port)")
     redis_ttl_seconds: int = Field(default=60, description="Default lock TTL in seconds")
+    
+    # Celery configuration
+    celery_broker_url: Optional[str] = Field(default=None, description="Celery broker URL")
+    celery_result_backend: Optional[str] = Field(default=None, description="Celery result backend")
+    celery_worker_max_tasks_per_child: int = Field(default=100, ge=1, description="Restart worker children after serving 100 tasks to prevent memory leaks")
 
     # Database connection pool configuration
     database_pool_size: int = Field(default=20, ge=1, description="The number of connections to keep open inside the connection pool")
