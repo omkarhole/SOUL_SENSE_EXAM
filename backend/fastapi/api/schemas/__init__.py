@@ -184,11 +184,19 @@ class CaptchaResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Schema for login request with CAPTCHA."""
+    """Schema for login request with CAPTCHA and device fingerprinting."""
     identifier: str = Field(..., description="Username or email")
     password: str = Field(..., description="User password")
     captcha_input: str = Field(..., description="User's CAPTCHA input")
     session_id: str = Field(..., description="Session ID from CAPTCHA generation")
+
+    # Device fingerprinting fields (#1230)
+    device_screen_resolution: Optional[str] = Field(None, description="Screen resolution (e.g., '1920x1080')")
+    device_timezone_offset: Optional[int] = Field(None, description="Timezone offset in minutes from UTC")
+    device_platform: Optional[str] = Field(None, description="Device platform/OS")
+    device_plugins_hash: Optional[str] = Field(None, description="Hash of installed browser plugins")
+    device_canvas_fingerprint: Optional[str] = Field(None, description="Canvas rendering fingerprint")
+    device_webgl_fingerprint: Optional[str] = Field(None, description="WebGL rendering fingerprint")
 
 
 class TokenData(BaseModel):

@@ -19,7 +19,7 @@ from ..utils.db_transaction import transactional, retry_on_transient
 from ..utils.security import get_password_hash, verify_password, is_hashed, check_password_history
 from ..utils.race_condition_protection import with_row_lock
 from ..utils.timestamps import utc_now_iso
-from ..models import User, LoginAttempt, PersonalProfile, RefreshToken, PasswordHistory
+from ..models import User, LoginAttempt, PersonalProfile, RefreshToken, PasswordHistory, UserSession
 from ..constants.security_constants import PASSWORD_HISTORY_LIMIT, REFRESH_TOKEN_EXPIRE_DAYS
 from .db_router import mark_write
 
@@ -770,6 +770,54 @@ class AuthService:
             logger.error(f"Error during logout revocation: {e}")
             
         return False
+        
+    async def create_user_session(
+        self,
+        user_id: int,
+        username: str,
+        ip_address: str,
+        user_agent: str,
+        device_fingerprint: 'DeviceFingerprint',
+        db_session: AsyncSession
+    ) -> str:
+        """
+        Create a new user session with device fingerprinting (#1230).
+        
+        Returns the session ID for use in JWT tokens.
+        """
+        import uuid
+        from ..utils.device_fingerprinting import DeviceFingerprint
+        
+        session_id = str(uuid.uuid4())
+        
+        # Create new session
+        session = UserSession(
+            session_id=session_id,
+            user_id=user_id,
+            username=username,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            device_fingerprint_hash=device_fingerprint.fingerprint_hash,
+            device_user_agent=device_fingerprint.user_agent,
+            device_accept_language=device_fingerprint.accept_language,
+            device_accept_encoding=device_fingerprint.accept_encoding,
+            device_screen_resolution=device_fingerprint.screen_resolution,
+            device_timezone_offset=device_fingerprint.timezone_offset,
+            device_platform=device_fingerprint.platform,
+            device_plugins_hash=device_fingerprint.plugins,
+            device_canvas_fingerprint=device_fingerprint.canvas_fingerprint,
+            device_webgl_fingerprint=device_fingerprint.webgl_fingerprint,
+            device_fingerprint_created_at=device_fingerprint.created_at,
+            is_active=True
+        )
+        
+        db_session.add(session)
+        await db_session.commit()
+        await db_session.refresh(session)
+        
+        logger.info(f"Created session {session_id} for user {username} with device fingerprint")
+        
+        return session_id
         
     def parse_name(self, name: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
         """Parse full name into first and last."""

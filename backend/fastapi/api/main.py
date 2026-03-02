@@ -454,6 +454,11 @@ def create_app() -> FastAPI:
     from .middleware.security import SecurityHeadersMiddleware
     app.add_middleware(SecurityHeadersMiddleware)
 
+    # Device Fingerprint Validation Middleware (#1230)
+    # Validates device fingerprints on authenticated requests to prevent session hijacking
+    from .middleware.device_fingerprint_middleware import DeviceFingerprintValidationMiddleware
+    app.add_middleware(DeviceFingerprintValidationMiddleware)
+
     # Consent Validation Middleware for privacy compliance
     # Blocks analytics data collection without user consent
     from .middleware.consent_middleware import ConsentValidationMiddleware

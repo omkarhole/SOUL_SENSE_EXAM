@@ -18,6 +18,7 @@ from ..utils.timestamps import normalize_utc_iso
 from ..constants.security_constants import REFRESH_TOKEN_EXPIRE_DAYS
 from ..models import User
 from ..utils.limiter import limiter
+from ..utils.device_fingerprinting import DeviceFingerprinting
 from app.core import (
     AuthenticationError,
     AuthorizationError,
@@ -190,7 +191,8 @@ async def login(
     response: Response,
     login_request: LoginRequest,
     request: Request,
-    auth_service: AuthService = Depends(get_auth_service)
+    auth_service: AuthService = Depends(get_auth_service),
+    db = Depends(get_db)
 ):
     """Login endpoint. Rate limited to 5 requests per minute per IP/user."""
     ip = get_real_ip(request)
@@ -203,16 +205,47 @@ async def login(
         )
 
     user = await auth_service.authenticate_user(login_request.identifier, login_request.password, ip_address=ip, user_agent=user_agent)
-    
+
     if user.is_2fa_enabled:
         pre_auth_token = await auth_service.initiate_2fa_login(user)
         response.status_code = status.HTTP_202_ACCEPTED
         return TwoFactorAuthRequiredResponse(pre_auth_token=pre_auth_token)
 
+    # Create device fingerprint from request and login data
+    device_fingerprint = DeviceFingerprinting.extract_fingerprint_from_request(request)
+
+    # Override fingerprint with login request data if provided
+    if login_request.device_screen_resolution:
+        device_fingerprint.screen_resolution = login_request.device_screen_resolution
+    if login_request.device_timezone_offset is not None:
+        device_fingerprint.timezone_offset = login_request.device_timezone_offset
+    if login_request.device_platform:
+        device_fingerprint.platform = login_request.device_platform
+    if login_request.device_plugins_hash:
+        device_fingerprint.plugins = login_request.device_plugins_hash
+    if login_request.device_canvas_fingerprint:
+        device_fingerprint.canvas_fingerprint = login_request.device_canvas_fingerprint
+    if login_request.device_webgl_fingerprint:
+        device_fingerprint.webgl_fingerprint = login_request.device_webgl_fingerprint
+
+    # Recalculate fingerprint hash with updated data
+    device_fingerprint.fingerprint_hash = DeviceFingerprinting.calculate_fingerprint_hash(device_fingerprint)
+
+    # Create session with device fingerprint
+    session_id = await auth_service.create_user_session(
+        user.id,
+        user.username,
+        ip,
+        user_agent,
+        device_fingerprint,
+        db_session=db
+    )
+
     access_token = auth_service.create_access_token(data={
-        "sub": user.username, 
-        "uid": user.id, 
-        "tid": str(user.tenant_id) if user.tenant_id else None
+        "sub": user.username,
+        "uid": user.id,
+        "tid": str(user.tenant_id) if user.tenant_id else None,
+        "jti": session_id  # Include session ID in JWT for fingerprint validation
     })
     refresh_token = await auth_service.create_refresh_token(user.id)
     has_multiple_sessions = await auth_service.has_multiple_active_sessions(user.id)
@@ -221,11 +254,11 @@ async def login(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=settings.cookie_secure, 
+        secure=settings.cookie_secure,
         samesite=settings.cookie_samesite,
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
-    
+
     return Token(
         access_token=access_token,
         token_type="bearer",
