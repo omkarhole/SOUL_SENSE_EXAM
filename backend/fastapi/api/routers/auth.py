@@ -495,7 +495,6 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]
 @router.post("/password-reset/initiate")
 async def initiate_password_reset(
     request: Request,
-    reset_data: PasswordResetRequest, 
     reset_data: PasswordResetRequest,
     background_tasks: BackgroundTasks,
     auth_service: AuthService = Depends(get_auth_service)
@@ -519,7 +518,6 @@ async def initiate_password_reset(
 @limiter.limit("3/minute")
 async def complete_password_reset(
     request: PasswordResetComplete,
-    req_obj: Request, 
     req_obj: Request,
     auth_service: AuthService = Depends(get_auth_service)
 ):
@@ -815,3 +813,127 @@ async def verify_step_up_auth(
     except Exception as e:
         logger.error(f"Step-up auth verification failed: {e}")
         raise HTTPException(status_code=500, detail="Step-up authentication verification failed")
+
+
+# --- Secrets Compliance Monitoring (#1246) ---
+
+@router.get("/compliance/secrets", response_model=Dict[str, Any], tags=["Security Compliance"])
+async def get_secrets_compliance_metrics(
+    current_user: Annotated[User, Depends(get_current_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get current secrets age and rotation compliance metrics.
+
+    Returns compliance statistics and violation details for dashboard monitoring.
+    Requires admin privileges.
+
+    - **total_active_tokens**: Total number of active refresh tokens
+    - **compliant_tokens**: Tokens within rotation policy
+    - **warning_violations**: Tokens needing attention (30+ days)
+    - **critical_violations**: Tokens requiring immediate action (60+ days)
+    - **expired_tokens**: Tokens exceeding maximum age (90+ days)
+    - **compliance_rate**: Percentage of compliant tokens
+    - **violations**: Detailed list of violating tokens
+    """
+    # Check admin privileges (simplified check - in production use proper RBAC)
+    if not getattr(current_user, 'is_admin', False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    from ..services.secrets_compliance_service import secrets_compliance_service
+
+    try:
+        # Get current metrics from cache
+        metrics = await secrets_compliance_service.get_compliance_metrics()
+
+        if not metrics:
+            # If no cached metrics, run fresh check
+            metrics = await secrets_compliance_service.check_compliance(db)
+            await secrets_compliance_service.update_metrics(metrics)
+
+        return metrics
+
+    except Exception as e:
+        logger.error(f"Failed to retrieve compliance metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve compliance metrics")
+
+
+@router.post("/compliance/secrets/check", response_model=Dict[str, Any], tags=["Security Compliance"])
+async def run_secrets_compliance_check(
+    current_user: Annotated[User, Depends(get_current_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger secrets compliance check.
+
+    Runs full compliance analysis and returns current status.
+    Requires admin privileges.
+    """
+    # Check admin privileges
+    if not getattr(current_user, 'is_admin', False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    from ..services.secrets_compliance_service import secrets_compliance_service
+
+    try:
+        # Run fresh compliance check
+        report = await secrets_compliance_service.check_compliance(db)
+
+        # Update metrics cache
+        await secrets_compliance_service.update_metrics(report)
+
+        # Trigger Celery task for alerting if violations found
+        if report.get('violations'):
+            from ..celery_tasks import check_secrets_age_compliance
+            # Run asynchronously (don't wait for completion)
+            check_secrets_age_compliance.delay()
+
+        return report
+
+    except Exception as e:
+        logger.error(f"Failed to run compliance check: {e}")
+        raise HTTPException(status_code=500, detail="Failed to run compliance check")
+
+
+@router.get("/compliance/secrets/thresholds", response_model=Dict[str, int], tags=["Security Compliance"])
+async def get_secrets_rotation_thresholds(
+    current_user: Annotated[User, Depends(get_current_user)] = None
+):
+    """
+    Get current secrets rotation threshold configuration.
+
+    Returns age thresholds in days for compliance monitoring.
+    """
+    # Check admin privileges
+    if not getattr(current_user, 'is_admin', False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    from ..services.secrets_compliance_service import secrets_compliance_service
+
+    return secrets_compliance_service.get_rotation_thresholds()
+
+
+@router.get("/compliance/secrets/violations", response_model=List[Dict[str, Any]], tags=["Security Compliance"])
+async def get_secrets_violations(
+    severity: str = Query("warning", description="Minimum severity level: warning, critical, expired"),
+    current_user: Annotated[User, Depends(get_current_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of tokens violating rotation policies.
+
+    Returns detailed information about tokens needing rotation.
+    Requires admin privileges.
+    """
+    # Check admin privileges
+    if not getattr(current_user, 'is_admin', False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    from ..services.secrets_compliance_service import secrets_compliance_service
+
+    try:
+        return await secrets_compliance_service.get_tokens_needing_rotation(db, severity)
+
+    except Exception as e:
+        logger.error(f"Failed to retrieve violations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve violations")

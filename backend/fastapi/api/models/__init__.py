@@ -36,6 +36,7 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, unique=True, nullable=False)
+    email = Column(String, unique=True, nullable=True)  # User email for notifications
     password_hash = Column(String, nullable=False)
     oauth_sub = Column(String, nullable=True, unique=True)  # OAuth subject identifier
     created_at = Column(String, default=utc_now_iso)
