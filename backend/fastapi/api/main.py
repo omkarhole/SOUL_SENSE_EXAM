@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 import time
 import traceback
@@ -62,6 +63,11 @@ async def lifespan(app: FastAPI):
     logger.info("LIFESPAN BOOT STARTED")
 
     app.state.settings = settings
+
+    # Configure bounded default executor to avoid unbounded thread growth
+    loop = asyncio.get_running_loop()
+    app.state.thread_pool_executor = ThreadPoolExecutor(max_workers=settings.thread_pool_max_workers)
+    loop.set_default_executor(app.state.thread_pool_executor)
 
     # Generate a unique instance ID for this server session
     # All JWTs will include this ID; tokens from previous instances are rejected
@@ -257,6 +263,9 @@ async def lifespan(app: FastAPI):
             await app.state.invalidation_task
         except asyncio.CancelledError:
             logger.info("Cache invalidation listener cancelled successfully")
+
+    if hasattr(app.state, 'thread_pool_executor'):
+        app.state.thread_pool_executor.shutdown(wait=False, cancel_futures=True)
 
     if hasattr(app.state, 'outbox_relay_task'):
         logger.info("Stopping Search Index Outbox Relay worker...")

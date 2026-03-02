@@ -10,13 +10,12 @@ from datetime import datetime, timedelta, UTC
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DatabaseError, IntegrityError, OperationalError
 from fastapi import HTTPException, status
 
 # Import models from models module
 from ..models import User, UserSettings, MedicalProfile, PersonalProfile, UserStrengths, UserEmotionalPatterns, Score, UserSession
 from ..utils.timestamps import utc_now_iso
-from .db_error_handler import safe_db_query, DatabaseConnectionError
 import bcrypt
 import logging
 
@@ -34,12 +33,12 @@ class UserService:
     async def get_user_by_id(self, user_id: int, include_deleted: bool = False) -> Optional[User]:
         """Retrieve a user by ID."""
         try:
-            return safe_db_query(
-                self.db,
-                lambda: self.db.query(User).filter(User.id == user_id).filter(User.is_deleted == False if not include_deleted else True).first(),
-                "get user by ID"
-            )
-        except DatabaseConnectionError:
+            stmt = select(User).filter(User.id == user_id)
+            if not include_deleted:
+                stmt = stmt.filter(User.is_deleted == False)
+            result = await self.db.execute(stmt)
+            return result.scalar_one_or_none()
+        except (OperationalError, DatabaseError):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service temporarily unavailable. Please try again later."
@@ -48,12 +47,12 @@ class UserService:
     async def get_user_by_username(self, username: str, include_deleted: bool = False) -> Optional[User]:
         """Retrieve a user by username."""
         try:
-            return safe_db_query(
-                self.db,
-                lambda: self.db.query(User).filter(User.username == username).filter(User.is_deleted == False if not include_deleted else True).first(),
-                "get user by username"
-            )
-        except DatabaseConnectionError:
+            stmt = select(User).filter(User.username == username)
+            if not include_deleted:
+                stmt = stmt.filter(User.is_deleted == False)
+            result = await self.db.execute(stmt)
+            return result.scalar_one_or_none()
+        except (OperationalError, DatabaseError):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service temporarily unavailable. Please try again later."
@@ -62,12 +61,13 @@ class UserService:
     async def get_all_users(self, skip: int = 0, limit: int = 100, include_deleted: bool = False) -> List[User]:
         """Retrieve all users with pagination."""
         try:
-            return safe_db_query(
-                self.db,
-                lambda: self.db.query(User).filter(User.is_deleted == False if not include_deleted else True).offset(skip).limit(limit).all(),
-                "get all users"
-            )
-        except DatabaseConnectionError:
+            stmt = select(User)
+            if not include_deleted:
+                stmt = stmt.filter(User.is_deleted == False)
+            stmt = stmt.offset(skip).limit(limit)
+            result = await self.db.execute(stmt)
+            return list(result.scalars().all())
+        except (OperationalError, DatabaseError):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service temporarily unavailable. Please try again later."
@@ -92,7 +92,7 @@ class UserService:
 
         # Check if username already exists (including soft-deleted for collision prevention)
         try:
-            existing_user = self.get_user_by_username(username, include_deleted=True)
+            existing_user = await self.get_user_by_username(username, include_deleted=True)
         except HTTPException as e:
             if e.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
                 raise  # Re-raise database connection errors
