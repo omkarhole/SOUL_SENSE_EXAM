@@ -104,6 +104,21 @@ async def lifespan(app: FastAPI):
     
     # Initialize database tables
     try:
+        from .services.db_service import Base, engine, AsyncSessionLocal
+        # Note: metadata.create_all is typically sync, for async we use run_sync
+        async def init_models():
+            async with engine.begin() as conn:
+                # await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+        
+        await init_models()
+        logger.info("Database tables initialized/verified (Async)")
+        
+        # Verify database connectivity
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text
+            await db.execute(text("SELECT 1"))
+            logger.info("Database connectivity verified (Async)")
         from .models import Base
         from .services.db_service import engine, AsyncSessionLocal
         # Note: In a production app, we would use migrations, but for this exercise we can auto-create
@@ -167,12 +182,14 @@ async def lifespan(app: FastAPI):
         async def purge_task_loop():
             while True:
                 try:
+                    logger.info("Starting scheduled purge of expired accounts...", extra={"task": "cleanup"})
                     print("[CLEANUP] Starting scheduled purge of expired accounts...")
                     from .services.db_service import AsyncSessionLocal
                     async with AsyncSessionLocal() as db:
                         from .services.user_service import UserService
                         user_service = UserService(db)
                         await user_service.purge_deleted_users(settings.deletion_grace_period_days)
+                    logger.info("Scheduled purge completed successfully", extra={"task": "cleanup"})
                     print("[CLEANUP] Scheduled purge completed successfully")
                 except Exception as e:
                     logger = logging.getLogger("api.purge_task")

@@ -107,6 +107,19 @@ class BaseAppSettings(BaseSettings):
     redis_password: Optional[str] = Field(default=None, description="Redis password")
     redis_db: int = Field(default=0, description="Redis database index")
     redis_ttl_seconds: int = Field(default=60, description="Default lock TTL in seconds")
+    
+    # Celery configuration
+    celery_broker_url: Optional[str] = Field(default=None, description="Celery broker URL")
+    celery_result_backend: Optional[str] = Field(default=None, description="Celery result backend")
+    celery_worker_max_tasks_per_child: int = Field(default=100, ge=1, description="Restart worker children after serving 100 tasks to prevent memory leaks")
+
+    # Database connection pool configuration
+    database_pool_size: int = Field(default=20, ge=1, description="The number of connections to keep open inside the connection pool")
+    database_max_overflow: int = Field(default=10, ge=0, description="The number of connections to allow in connection pool ‘overflow’")
+    database_pool_timeout: int = Field(default=30, ge=0, description="The number of seconds to wait before giving up on getting a connection from the pool")
+    database_pool_recycle: int = Field(default=1800, ge=-1, description="Number of seconds after which a connection is automatically recycled")
+    database_pool_pre_ping: bool = Field(default=True, description="Enable pool pre-ping to handle DB node failures")
+    database_statement_timeout: int = Field(default=30000, ge=0, description="Database statement timeout in milliseconds")
 
     # Deletion Grace Period
     deletion_grace_period_days: int = Field(default=30, ge=0, description="Grace period for account deletion in days")

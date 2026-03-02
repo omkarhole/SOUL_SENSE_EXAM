@@ -1,4 +1,7 @@
 """API router for assessment endpoints."""
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Annotated
@@ -22,6 +25,7 @@ async def get_assessments(
     age_group: Optional[str] = Query(None, description="Filter by age group"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(get_current_user),
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: AsyncSession = Depends(get_db)
 ):
@@ -56,6 +60,7 @@ async def get_assessments(
 
 @router.get("/stats", response_model=AssessmentStatsResponse)
 async def get_assessment_stats(
+    current_user: User = Depends(get_current_user),
     username: Optional[str] = Query(None, description="Filter stats by username (Admin only)"),
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: AsyncSession = Depends(get_db)
@@ -65,6 +70,7 @@ async def get_assessment_stats(
 
     - **username**: Optional filter to get stats for a specific user (Admin only)
     """
+    stats = await AssessmentService.get_assessment_stats(db=db, user_id=current_user.id)
     # Enforce ownership: Non-admins can only see their own stats
     if not getattr(current_user, "is_admin", False):
         username = current_user.username
@@ -77,6 +83,7 @@ async def get_assessment_stats(
 @router.get("/{assessment_id}", response_model=AssessmentDetailResponse)
 async def get_assessment(
     assessment_id: int,
+    current_user: User = Depends(get_current_user),
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: AsyncSession = Depends(get_db)
 ):
@@ -85,6 +92,17 @@ async def get_assessment(
 
     - **assessment_id**: The ID of the assessment to retrieve
     """
+    assessment = await AssessmentService.get_assessment_by_id(
+        db=db, assessment_id=assessment_id, user_id=current_user.id
+    )
+    
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    # Get response count
+    responses = await AssessmentService.get_assessment_responses(
+        db=db, assessment_id=assessment_id, user_id=current_user.id
+    )
     assessment = await AssessmentService.get_assessment_by_id(db=db, assessment_id=assessment_id)
 
     if not assessment:

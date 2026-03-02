@@ -12,12 +12,19 @@ from ..config import get_settings_instance, get_settings
 from ..schemas import UserCreate, Token, UserResponse, ErrorResponse, PasswordResetRequest, PasswordResetComplete, TwoFactorLoginRequest, TwoFactorAuthRequiredResponse, TwoFactorConfirmRequest, UsernameAvailabilityResponse, CaptchaResponse, LoginRequest, OAuthAuthorizeRequest, OAuthTokenRequest, OAuthTokenResponse, OAuthUserInfo
 from ..services.db_router import get_db
 from ..services.auth_service import AuthService
+
+async def get_auth_service(db: AsyncSession = Depends(get_db)) -> AuthService:
+    return AuthService(db)
+
 from ..services.captcha_service import captcha_service
 from ..utils.network import get_real_ip
 from ..utils.timestamps import normalize_utc_iso
 from ..constants.security_constants import REFRESH_TOKEN_EXPIRE_DAYS
 from ..models import User
 from ..utils.limiter import limiter
+# Rate limiters imported inline within routes to avoid potential circular/timing issues
+from sqlalchemy.ext.asyncio import AsyncSession
+from cachetools import TTLCache
 from app.core import (
     AuthenticationError,
     AuthorizationError,
@@ -54,11 +61,26 @@ async def get_server_id(request: Request):
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(request: Request, token: Annotated[str, Depends(oauth2_scheme)], db: AsyncSession = Depends(get_db)):
+    """
+    Get current user from JWT token (Async).
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     """Get current user from JWT token."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.jwt_algorithm])
         
         # Check if token is revoked
+        from ..root_models import TokenRevocation
+        from sqlalchemy import select
+        stmt = select(TokenRevocation).filter(TokenRevocation.token_str == token)
+        result = await db.execute(stmt)
+        revoked = result.scalar_one_or_none()
+        if revoked:
+            raise credentials_exception
         from ..models import TokenRevocation
         rev_stmt = select(TokenRevocation).filter(TokenRevocation.token_str == token)
         rev_res = await db.execute(rev_stmt)
@@ -70,6 +92,14 @@ async def get_current_user(request: Request, token: Annotated[str, Depends(oauth
         if not username:
             raise InvalidCredentialsError()
     except JWTError:
+        raise credentials_exception
+
+    stmt = select(User).filter(User.username == username)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    
+    if user is None:
+        raise credentials_exception
         raise InvalidCredentialsError()
     except Exception as e:
         import traceback
@@ -117,6 +147,8 @@ async def get_current_user(request: Request, token: Annotated[str, Depends(oauth
         await cache_service.update_version("user", user.id, user_data["version"])
     
     request.state.user_id = user.id
+    
+    # Check if user is active
     if not getattr(user, 'is_active', True):
         raise BusinessLogicError(message="User account is inactive", code="INACTIVE_ACCOUNT")
     
@@ -164,6 +196,19 @@ async def check_username_availability(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service)
 ):
+    """
+    Check if a username is available.
+    Rate limited to 20 requests per minute per IP.
+    """
+    client_ip = get_real_ip(request)
+    count = availability_limiter_cache.get(client_ip, 0)
+    if count >= 20:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many availability checks. Please wait a minute."
+        )
+    availability_limiter_cache[client_ip] = count + 1
+    
     """Check if a username is available."""
     available, message = await auth_service.check_username_available(username)
     return UsernameAvailabilityResponse(available=available, message=message)
@@ -172,6 +217,21 @@ async def check_username_availability(
 @limiter.limit("5/minute")
 async def register(
     request: Request,
+    user: UserCreate, 
+    auth_service: AuthService = Depends(get_auth_service)
+):
+    from ..middleware.rate_limiter import registration_limiter
+    # Rate limit by IP
+    real_ip = get_real_ip(request)
+    is_limited, wait_time = registration_limiter.is_rate_limited(real_ip)
+    if is_limited:
+        raise RateLimitException(
+            message=f"Too many registration attempts. Please try again in {wait_time}s.",
+            wait_seconds=wait_time
+        )
+
+    success, new_user, message = await auth_service.register_user(user)
+    
     user: UserCreate,
     db: AsyncSession = Depends(get_db),
     auth_service: AuthService = Depends(get_auth_service)
@@ -196,6 +256,27 @@ async def login(
     ip = get_real_ip(request)
     user_agent = request.headers.get("user-agent", "Unknown")
 
+    # 1. Start with CAPTCHA Validation
+    if not captcha_service.validate_captcha(login_request.session_id, login_request.captcha_input):
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The CAPTCHA validation failed. Please refresh the CAPTCHA and try again."
+        )
+
+    # 2. Rate Limit by IP
+    is_limited, wait_time = login_limiter.is_rate_limited(ip)
+    if is_limited:
+         raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many login attempts. Please try again in {wait_time}s."
+        )
+
+    # 3. Rate Limit by Username
+    is_limited, wait_time = login_limiter.is_rate_limited(f"login_{login_request.identifier}")
+    if is_limited:
+         raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Account temporarily restricted. Please try again in {wait_time}s."
     if not captcha_service.validate_captcha(login_request.session_id, login_request.captcha_input):
         raise ValidationError(
             message="The CAPTCHA validation failed. Please refresh the CAPTCHA and try again.",
@@ -209,6 +290,19 @@ async def login(
         response.status_code = status.HTTP_202_ACCEPTED
         return TwoFactorAuthRequiredResponse(pre_auth_token=pre_auth_token)
 
+    # Session Fixation Protection
+    old_refresh_token = request.cookies.get("refresh_token")
+    if old_refresh_token:
+        await auth_service.revoke_refresh_token(old_refresh_token)
+
+    access_token = auth_service.create_access_token(
+        data={"sub": user.username}
+    )
+    
+    refresh_token = await auth_service.create_refresh_token(user.id)
+    
+    # Optional logic for multiple sessions (can be implemented in AuthService if needed)
+    # has_multiple_sessions = await auth_service.has_multiple_active_sessions(user.id)
     access_token = auth_service.create_access_token(data={
         "sub": user.username, 
         "uid": user.id, 
@@ -226,13 +320,19 @@ async def login(
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
     
+    from ..models import PersonalProfile
+    stmt = select(PersonalProfile).filter(PersonalProfile.user_id == user.id)
+    res_p = await auth_service.db.execute(stmt)
+    profile = res_p.scalar_one_or_none()
+
     return Token(
         access_token=access_token,
         token_type="bearer",
         refresh_token=refresh_token,
         username=user.username,
-        email=user.personal_profile.email if user.personal_profile else None,
+        email=profile.email if profile else None,
         id=user.id,
+        created_at=user.created_at
         created_at=normalize_utc_iso(user.created_at, fallback_now=True),
         warnings=(
             [{
@@ -270,19 +370,21 @@ async def verify_2fa(
 ):
     """Verify 2FA code and issue tokens."""
     ip = get_real_ip(request)
-    # PR 10: Session Fixation Protection - Revoke any existing session cookie
+    # Session Fixation Protection
     old_refresh_token = request.cookies.get("refresh_token")
     if old_refresh_token:
-        auth_service.revoke_refresh_token(old_refresh_token)
+        await auth_service.revoke_refresh_token(old_refresh_token)
     
     # Verify 2FA and get user
-    user = auth_service.verify_2fa_login(login_request.pre_auth_token, login_request.code, ip_address=ip)
+    user = await auth_service.verify_2fa_login(login_request.pre_auth_token, login_request.code, ip_address=ip)
     
     # Issue Tokens
     access_token = auth_service.create_access_token(
         data={"sub": user.username}
     )
     user = await auth_service.verify_2fa_login(login_request.pre_auth_token, login_request.code, ip_address=ip)
+    
+    refresh_token = await auth_service.create_refresh_token(user.id)
     
     access_token = auth_service.create_access_token(data={"sub": user.username, "tid": str(user.tenant_id) if user.tenant_id else None})
     refresh_token = await auth_service.create_refresh_token(user.id)
@@ -297,13 +399,19 @@ async def verify_2fa(
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
     
+    from ..models import PersonalProfile
+    stmt = select(PersonalProfile).filter(PersonalProfile.user_id == user.id)
+    res_p = await auth_service.db.execute(stmt)
+    profile = res_p.scalar_one_or_none()
+
     return Token(
         access_token=access_token,
         token_type="bearer",
         refresh_token=refresh_token,
         username=user.username,
-        email=user.personal_profile.email if user.personal_profile else None,
+        email=profile.email if profile else None,
         id=user.id,
+        created_at=user.created_at
         created_at=normalize_utc_iso(user.created_at, fallback_now=True),
         warnings=(
             [{
@@ -344,7 +452,7 @@ async def refresh(
             max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         )
         
-    access_token, new_refresh_token = auth_service.refresh_access_token(refresh_token)
+    access_token, new_refresh_token = await auth_service.refresh_access_token(refresh_token)
     
     response.set_cookie(
         key="refresh_token",
@@ -381,6 +489,10 @@ async def logout(
     if refresh_token:
         await auth_service.revoke_refresh_token(refresh_token)
     
+    # 2. Revoke Access Token (from header)
+    await auth_service.revoke_access_token(token)
+    
+    # 3. Audit Logout
     await auth_service.revoke_access_token(token)
     
     from .audit_service import AuditService
@@ -406,6 +518,7 @@ async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]
 @router.post("/password-reset/initiate")
 async def initiate_password_reset(
     request: Request,
+    reset_data: PasswordResetRequest, 
     reset_data: PasswordResetRequest,
     background_tasks: BackgroundTasks,
     auth_service: AuthService = Depends(get_auth_service)
@@ -429,6 +542,7 @@ async def initiate_password_reset(
 @limiter.limit("3/minute")
 async def complete_password_reset(
     request: PasswordResetComplete,
+    req_obj: Request, 
     req_obj: Request,
     auth_service: AuthService = Depends(get_auth_service)
 ):
@@ -443,6 +557,11 @@ async def complete_password_reset(
     if is_limited:
         raise RateLimitError(message=f"Too many attempts. Please try again in {wait_time}s.", wait_seconds=wait_time)
 
+    success, message = await auth_service.complete_password_reset(
+        request.email, 
+        request.otp_code, 
+        request.new_password
+    )
     success, message = await auth_service.complete_password_reset(request.email, request.otp_code, request.new_password)
     if not success:
         raise ValidationError(message=message, details=[{"field": "otp_code", "error": "Invalid or expired OTP"}])
@@ -455,6 +574,7 @@ async def initiate_2fa_setup(
     current_user: Annotated[User, Depends(get_current_user)],
     auth_service: AuthService = Depends(get_auth_service)
 ):
+    """Send OTP to verify email before enabling 2FA."""
     if await auth_service.send_2fa_setup_otp(current_user):
         return {"message": "OTP sent to your email"}
     raise BusinessLogicError(message="Could not send OTP. Check email configuration.", code="OTP_SEND_FAILED")
@@ -467,6 +587,7 @@ async def enable_2fa(
     current_user: Annotated[User, Depends(get_current_user)],
     auth_service: AuthService = Depends(get_auth_service)
 ):
+    """Enable 2FA after verifying OTP."""
     if await auth_service.enable_2fa(current_user.id, confirm_request.code):
         return {"message": "2FA enabled successfully"}
     raise ValidationError(message="Invalid verification code", details=[{"field": "code", "error": "Invalid or expired verification code"}])
@@ -478,6 +599,7 @@ async def disable_2fa(
     current_user: Annotated[User, Depends(get_current_user)],
     auth_service: AuthService = Depends(get_auth_service)
 ):
+    """Disable 2FA."""
     if await auth_service.disable_2fa(current_user.id):
         return {"message": "2FA disabled"}
     raise BusinessLogicError(message="Failed to disable 2FA", code="2FA_DISABLE_FAILED")
