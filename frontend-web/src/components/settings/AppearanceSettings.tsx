@@ -3,7 +3,7 @@
 import { UserSettings } from '../../lib/api/settings';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui';
 import { Checkbox } from '../ui';
-import { useDebounce } from '../../hooks/useDebounce';
+import { useDebounceCallback } from '../../hooks/useDebounceCallback';
 import { ThemeToggle } from './theme-toggle';
 import { Sun, Moon, Monitor, Type, Eye } from 'lucide-react';
 
@@ -13,7 +13,7 @@ interface AppearanceSettingsProps {
 }
 
 export function AppearanceSettings({ settings, onChange }: AppearanceSettingsProps) {
-  const debouncedOnChange = useDebounce(onChange, 500);
+  const debouncedOnChange = useDebounceCallback(onChange, 500);
 
   const handleThemeChange = (theme: 'light' | 'dark' | 'system') => {
     debouncedOnChange({ theme });

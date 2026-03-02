@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { PrivacySettingsPremium } from '@/components/settings';
+import { toast } from '@/lib/toast';
 
 export default function PrivacyDemoPage() {
   const [settings, setSettings] = useState({
@@ -29,7 +30,7 @@ export default function PrivacyDemoPage() {
     // Simulate API call
     console.log('Deleting account with password:', password);
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    alert('Account deleted simulation complete.');
+    toast.success('Account deleted simulation complete.');
   };
 
   return (

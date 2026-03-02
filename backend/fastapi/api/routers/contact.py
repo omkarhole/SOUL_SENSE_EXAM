@@ -1,10 +1,11 @@
 """
 Contact Us router for handling contact form submissions.
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from ..services.contact_service import contact_service
+from app.core import NotFoundError, InternalServerError
 
 router = APIRouter(tags=["Contact"])
 
@@ -54,9 +55,9 @@ async def submit_contact_form(data: ContactSubmissionRequest):
             submission_id=submission["id"]
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "CONTACT_ERROR", "message": f"Failed to submit contact form: {str(e)}"}
+        raise InternalServerError(
+            message="Failed to submit contact form",
+            details=[{"code": "CONTACT_ERROR", "error": str(e)}]
         )
 
 
@@ -79,9 +80,9 @@ async def get_contact_submissions(
         )
         return result
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "FETCH_ERROR", "message": f"Failed to fetch submissions: {str(e)}"}
+        raise InternalServerError(
+            message="Failed to fetch submissions",
+            details=[{"code": "FETCH_ERROR", "error": str(e)}]
         )
 
 
@@ -91,10 +92,7 @@ async def get_submission(submission_id: str):
     submission = await contact_service.get_by_id(submission_id)
     
     if not submission:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "NOT_FOUND", "message": "Submission not found"}
-        )
+        raise NotFoundError(resource="Submission", resource_id=submission_id)
     
     return submission
 
@@ -105,10 +103,7 @@ async def mark_submission_read(submission_id: str):
     submission = await contact_service.mark_read(submission_id)
     
     if not submission:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "NOT_FOUND", "message": "Submission not found"}
-        )
+        raise NotFoundError(resource="Submission", resource_id=submission_id)
     
     return {"success": True, "submission": submission}
 
@@ -119,9 +114,6 @@ async def delete_submission(submission_id: str):
     deleted = await contact_service.delete(submission_id)
     
     if not deleted:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "NOT_FOUND", "message": "Submission not found"}
-        )
+        raise NotFoundError(resource="Submission", resource_id=submission_id)
     
     return {"success": True, "message": "Submission deleted"}

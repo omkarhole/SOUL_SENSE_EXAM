@@ -237,7 +237,7 @@ export function FloatingNavbar() {
                       <span>Profile</span>
                     </Link>
                     <Link
-                      href="/settings"
+                      href="/user-settings"
                       className="relative flex cursor-pointer select-none items-center rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-200/50 dark:hover:bg-white/10 transition-colors"
                       onClick={() => setUserMenuOpen(false)}
                     >

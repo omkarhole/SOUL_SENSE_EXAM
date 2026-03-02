@@ -7,7 +7,8 @@ import { ArrowLeft, Save, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { MoodSlider, TagSelector, JournalEditor } from '@/components/journal';
-import { Button, Card, CardContent, useToast } from '@/components/ui';
+import { Button, Card, CardContent } from '@/components/ui';
+import { toast } from '@/lib/toast';
 import { journalApi } from '@/lib/api/journal';
 import { JournalEntryCreate } from '@/types/journal';
 
@@ -20,7 +21,6 @@ interface JournalDraft extends JournalEntryCreate {
 
 export default function NewJournalEntryPage() {
   const router = useRouter();
-  const { toast } = useToast();
 
   const [entry, setEntry] = useState<JournalEntryCreate>({
     content: '',
@@ -98,10 +98,7 @@ export default function NewJournalEntryPage() {
 
   const handleSubmit = async () => {
     if (!entry.content.trim()) {
-      toast({
-        type: 'error',
-        message: 'Please write something in your journal entry.',
-      });
+      toast.error('Please write something in your journal entry.');
       return;
     }
 
@@ -120,19 +117,13 @@ export default function NewJournalEntryPage() {
       // Clear draft
       localStorage.removeItem(DRAFT_KEY);
 
-      toast({
-        type: 'success',
-        message: 'Journal entry saved successfully!',
-      });
+      toast.success('Journal entry saved successfully!');
 
       // Navigate to journal list
       router.push('/journal');
     } catch (error) {
       console.error('Failed to save journal entry:', error);
-      toast({
-        type: 'error',
-        message: 'Failed to save journal entry. Please try again.',
-      });
+      toast.error('Failed to save journal entry. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

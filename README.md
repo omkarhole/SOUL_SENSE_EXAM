@@ -130,6 +130,9 @@ User Input → GUI Events → Business Logic → Data Validation → Database �
 
 ### 1. Setup Environment
 
+> [!TIP]
+> **Windows Users**: For a detailed step-by-step guide, please see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
+
 ```bash
 # Create virtual environment
 cd SOUL_SENSE_EXAM
@@ -440,6 +443,9 @@ Advanced way (Manual Uvicorn):
 ---
 
 ## Troubleshooting
+
+> [!TIP]
+> For a comprehensive Windows-specific troubleshooting guide, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
 
 ### Common Installation Issues
 

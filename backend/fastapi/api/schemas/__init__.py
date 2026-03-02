@@ -170,11 +170,11 @@ class Token(BaseModel):
     refresh_token: Optional[str] = None
     username: Optional[str] = None
     email: Optional[str] = None
-    id: int
-    created_at: Optional[str] = None
     id: Optional[int] = None
     created_at: Optional[datetime] = None
     warnings: Optional[List[Dict[str, str]]] = None
+    onboarding_completed: Optional[bool] = None
+    is_admin: Optional[bool] = None
 
 
 class CaptchaResponse(BaseModel):
@@ -200,10 +200,17 @@ class UserResponse(BaseModel):
     """Schema for user response (excludes password)."""
     id: int
     username: str
-    created_at: str
+    created_at: datetime
     last_login: Optional[str] = None
+    onboarding_completed: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AvatarUploadResponse(BaseModel):
+    """Schema for avatar upload response."""
+    message: str
+    avatar_path: str
 
 
 class FieldError(BaseModel):
@@ -290,11 +297,11 @@ class ExamSubmit(BaseModel):
 class AssessmentResponse(BaseModel):
     """Schema for a single assessment response."""
     id: int
-    username: str
+    username: Optional[str] = None
     total_score: int
     sentiment_score: Optional[float] = 0.0
-    age: Optional[int]
-    detailed_age_group: Optional[str]
+    age: Optional[int] = None
+    detailed_age_group: Optional[str] = None
     timestamp: str
     
     model_config = ConfigDict(from_attributes=True)
@@ -480,6 +487,7 @@ class UserDetail(BaseModel):
     has_strengths: bool = False
     has_emotional_patterns: bool = False
     total_assessments: int = 0
+    onboarding_completed: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -508,6 +516,11 @@ class UserSettingsCreate(BaseModel):
     data_usage_consent: bool = False
     emergency_disclaimer_accepted: bool = False
     crisis_support_preference: bool = True
+    crisis_mode_enabled: bool = False  # Enable crisis intervention routing (Issue #930)
+    
+    # Data Usage Consent (Issue #929)
+    consent_ml_training: bool = False
+    consent_aggregated_research: bool = False
 
 
 class UserSettingsUpdate(BaseModel):
@@ -530,6 +543,11 @@ class UserSettingsUpdate(BaseModel):
     data_usage_consent: Optional[bool] = None
     emergency_disclaimer_accepted: Optional[bool] = None
     crisis_support_preference: Optional[bool] = None
+    crisis_mode_enabled: Optional[bool] = None  # Enable crisis intervention routing (Issue #930)
+    
+    # Data Usage Consent (Issue #929)
+    consent_ml_training: Optional[bool] = None
+    consent_aggregated_research: Optional[bool] = None
 
 
 class UserSettingsResponse(BaseModel):
@@ -543,21 +561,56 @@ class UserSettingsResponse(BaseModel):
     language: str
     
     # Wave 2 Phase 2.3 & 2.4
-    decision_making_style: Optional[str]
-    risk_tolerance: Optional[int]
-    readiness_for_change: Optional[int]
-    advice_frequency: Optional[str]
-    reminder_style: str
-    advice_boundaries: List[str]
-    ai_trust_level: Optional[int]
+    decision_making_style: Optional[str] = None
+    risk_tolerance: Optional[int] = None
+    readiness_for_change: Optional[int] = None
+    advice_frequency: Optional[str] = None
+    reminder_style: Optional[str] = None
+    advice_boundaries: Optional[List[str]] = None
+    ai_trust_level: Optional[int] = None
     
-    data_usage_consent: bool
-    emergency_disclaimer_accepted: bool
-    crisis_support_preference: bool
+    data_usage_consent: Optional[bool] = None
+    emergency_disclaimer_accepted: Optional[bool] = None
+    crisis_support_preference: Optional[bool] = None
+    crisis_mode_enabled: Optional[bool] = None  # Enable crisis intervention routing (Issue #930)
+    
+    # Data Usage Consent (Issue #929)
+    consent_ml_training: Optional[bool] = None
+    consent_aggregated_research: Optional[bool] = None
     
     updated_at: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================================
+# Data Consent Schemas (Issue #929)
+# ============================================================================
+
+class DataConsentUpdate(BaseModel):
+    """Schema for updating data consent settings."""
+    consent_ml_training: Optional[bool] = None
+    consent_aggregated_research: Optional[bool] = None
+
+
+class DataConsentResponse(BaseModel):
+    """Schema for data consent response."""
+    consent_ml_training: bool
+    consent_aggregated_research: bool
+
+
+# ============================================================================
+# Crisis Settings Schemas (Issue #930)
+# ============================================================================
+
+class CrisisSettingsUpdate(BaseModel):
+    """Schema for updating crisis settings."""
+    crisis_mode_enabled: bool
+
+
+class CrisisSettingsResponse(BaseModel):
+    """Schema for crisis settings response."""
+    crisis_mode_enabled: bool
 
 
 # ============================================================================
@@ -638,6 +691,10 @@ class PersonalProfileCreate(BaseModel):
     social_interaction_freq: Optional[str] = None
     exercise_freq: Optional[str] = None
     dietary_patterns: Optional[str] = None
+    sleep_hours: Optional[float] = Field(None, ge=0, le=24, description="Average hours of sleep per night (0-24)")
+    has_therapist: Optional[bool] = None
+    support_network_size: Optional[int] = Field(None, ge=0, le=100, description="Number of people in support network (0-100)")
+    primary_support_type: Optional[str] = None
 
 
 class PersonalProfileUpdate(BaseModel):
@@ -666,6 +723,10 @@ class PersonalProfileUpdate(BaseModel):
     social_interaction_freq: Optional[str] = None
     exercise_freq: Optional[str] = None
     dietary_patterns: Optional[str] = None
+    sleep_hours: Optional[float] = Field(None, ge=0, le=24, description="Average hours of sleep per night (0-24)")
+    has_therapist: Optional[bool] = None
+    support_network_size: Optional[int] = Field(None, ge=0, le=100, description="Number of people in support network (0-100)")
+    primary_support_type: Optional[str] = None
 
     @field_validator('email', mode='before')
     @classmethod
@@ -710,6 +771,10 @@ class PersonalProfileResponse(BaseModel):
     social_interaction_freq: Optional[str] = None
     exercise_freq: Optional[str] = None
     dietary_patterns: Optional[str] = None
+    sleep_hours: Optional[float] = None
+    has_therapist: Optional[bool] = None
+    support_network_size: Optional[int] = None
+    primary_support_type: Optional[str] = None
     
     last_updated: str
 
@@ -736,6 +801,8 @@ class UserStrengthsCreate(BaseModel):
     short_term_goals: Optional[str] = None
     long_term_vision: Optional[str] = None
     primary_help_area: Optional[str] = None
+    primary_goal: Optional[str] = Field(None, max_length=500)
+    focus_areas: Optional[List[str]] = None
 
 
 class UserStrengthsUpdate(BaseModel):
@@ -754,6 +821,8 @@ class UserStrengthsUpdate(BaseModel):
     short_term_goals: Optional[str] = None
     long_term_vision: Optional[str] = None
     primary_help_area: Optional[str] = None
+    primary_goal: Optional[str] = Field(None, max_length=500)
+    focus_areas: Optional[List[str]] = None
 
 
 class UserStrengthsResponse(BaseModel):
@@ -770,10 +839,12 @@ class UserStrengthsResponse(BaseModel):
     goals: Optional[str]
     
     # Wave 2 Phase 2.1 & 2.2
-    relationship_stress: Optional[int]
-    short_term_goals: Optional[str]
-    long_term_vision: Optional[str]
-    primary_help_area: Optional[str]
+    relationship_stress: Optional[int] = None
+    short_term_goals: Optional[str] = None
+    long_term_vision: Optional[str] = None
+    primary_help_area: Optional[str] = None
+    primary_goal: Optional[str] = None
+    focus_areas: Optional[List[str]] = None
     
     last_updated: str
 
@@ -805,9 +876,9 @@ class UserEmotionalPatternsResponse(BaseModel):
     id: int
     user_id: int
     common_emotions: str
-    emotional_triggers: Optional[str]
-    coping_strategies: Optional[str]
-    preferred_support: Optional[str]
+    emotional_triggers: Optional[str] = None
+    coping_strategies: Optional[str] = None
+    preferred_support: Optional[str] = None
     last_updated: str
 
     model_config = ConfigDict(from_attributes=True)
@@ -825,6 +896,34 @@ class CompleteProfileResponse(BaseModel):
     personal_profile: Optional[PersonalProfileResponse] = None
     strengths: Optional[UserStrengthsResponse] = None
     emotional_patterns: Optional[UserEmotionalPatternsResponse] = None
+    onboarding_completed: bool = False
+
+
+# ============================================================================
+# Onboarding Schemas (Issue #933)
+# ============================================================================
+
+class OnboardingData(BaseModel):
+    """Schema for completing onboarding with all profile data."""
+    # Step 1: Welcome & Vision (Goals)
+    primary_goal: Optional[str] = Field(None, max_length=500)
+    focus_areas: Optional[List[str]] = None
+    
+    # Step 2: Current Lifestyle
+    sleep_hours: Optional[float] = Field(None, ge=0, le=24)
+    exercise_freq: Optional[str] = None
+    dietary_patterns: Optional[str] = None
+    
+    # Step 3: Support System
+    has_therapist: Optional[bool] = None
+    support_network_size: Optional[int] = Field(None, ge=0, le=100)
+    primary_support_type: Optional[str] = None
+
+
+class OnboardingCompleteResponse(BaseModel):
+    """Response after completing onboarding."""
+    message: str = "Onboarding completed successfully"
+    onboarding_completed: bool = True
 
 
 
@@ -1060,6 +1159,7 @@ class JournalResponse(BaseModel):
     stress_level: Optional[int] = None
     stress_triggers: Optional[str] = None
     daily_schedule: Optional[str] = None
+    similarity: Optional[float] = Field(None, description="Cosine similarity score for semantic search")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1299,3 +1399,300 @@ class GamificationSummary(BaseModel):
     streaks: List[UserStreakResponse]
     recent_achievements: List[AchievementResponse]
     active_challenges: List[ChallengeResponse]
+
+
+class DashboardStatisticsResponse(BaseModel):
+    """Response for dashboard statistics with historical trends."""
+    historical_trends: List[EQScorePoint]
+
+
+# ============================================================================
+# Audit Logging Schemas
+# ============================================================================
+
+class AuditLogResponse(BaseModel):
+    """Response schema for individual audit log entries."""
+    id: int
+    event_id: str
+    timestamp: datetime
+    event_type: str
+    severity: str
+    username: Optional[str]
+    user_id: Optional[int]
+    ip_address: Optional[str]
+    user_agent: Optional[str]
+    resource_type: Optional[str]
+    resource_id: Optional[str]
+    action: Optional[str]
+    outcome: str
+    details: Optional[str]
+    error_message: Optional[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AuditLogListResponse(BaseModel):
+    """Response schema for paginated audit log lists."""
+    logs: List[AuditLogResponse]
+    total_count: int
+    page: int
+    per_page: int
+
+class AuditExportResponse(BaseModel):
+    """Response schema for audit log exports."""
+    data: str
+    format: str
+    timestamp: datetime
+
+# ============================================================================
+# OAuth Schemas
+# ============================================================================
+
+class OAuthAuthorizeRequest(BaseModel):
+    """Request for OAuth authorization."""
+    response_type: str = Field(..., description="Must be 'code'")
+    client_id: str = Field(..., description="Client ID")
+    redirect_uri: str = Field(..., description="Redirect URI")
+    scope: Optional[str] = Field("openid profile email", description="Requested scopes")
+    state: Optional[str] = Field(..., description="State parameter")
+    code_challenge: str = Field(..., description="PKCE code challenge")
+    code_challenge_method: str = Field("S256", description="PKCE method")
+
+class OAuthTokenRequest(BaseModel):
+    """Request for OAuth token exchange."""
+    grant_type: str = Field(..., description="Must be 'authorization_code'")
+    code: str = Field(..., description="Authorization code")
+    redirect_uri: str = Field(..., description="Redirect URI")
+    client_id: str = Field(..., description="Client ID")
+    code_verifier: str = Field(..., description="PKCE code verifier")
+
+class OAuthTokenResponse(BaseModel):
+    """Response for OAuth token."""
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    id_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+class OAuthUserInfo(BaseModel):
+    """User info from OAuth."""
+    sub: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+
+
+# ============================================================================
+# KPI & Reporting Schemas (Issue #981)
+# ============================================================================
+
+class ConversionRateKPI(BaseModel):
+    """Conversion Rate KPI: (signup_completed / signup_started) * 100"""
+    signup_started: int = Field(description="Total number of signup attempts started")
+    signup_completed: int = Field(description="Total number of successful signups")
+    conversion_rate: float = Field(description="Conversion rate as percentage (0-100)")
+    period: str = Field(description="Time period for the calculation")
+
+
+class RetentionKPI(BaseModel):
+    """Retention KPI: (day_n_active_users / day_0_users) * 100"""
+    day_0_users: int = Field(description="Number of users active on day 0")
+    day_n_active_users: int = Field(description="Number of users still active on day N")
+    retention_rate: float = Field(description="Retention rate as percentage (0-100)")
+    period_days: int = Field(description="Number of days for retention calculation")
+    period: str = Field(description="Time period for the calculation")
+
+
+class ARPUKPI(BaseModel):
+    """ARPU KPI: (total_revenue / total_active_users)"""
+    total_revenue: float = Field(description="Total revenue in the period")
+    total_active_users: int = Field(description="Total active users in the period")
+    arpu: float = Field(description="Average Revenue Per User")
+    period: str = Field(description="Time period for the calculation")
+    currency: str = Field(default="USD", description="Currency for revenue figures")
+
+
+class KPISummary(BaseModel):
+    """Combined KPI summary for dashboard reporting"""
+    conversion_rate: ConversionRateKPI
+    retention_rate: RetentionKPI
+    arpu: ARPUKPI
+    calculated_at: str = Field(description="ISO 8601 timestamp when KPIs were calculated")
+    period: str = Field(description="Time period these KPIs cover")
+
+
+# ============================================================================
+# Privacy & Consent Schemas (Issue #982)
+# ============================================================================
+
+class ConsentEventCreate(BaseModel):
+    """Schema for tracking consent events (consent_given, consent_revoked)."""
+    anonymous_id: str = Field(..., min_length=10, description="Client-generated anonymous ID")
+    event_type: str = Field(..., pattern="^(consent_given|consent_revoked)$", description="Type of consent event")
+    consent_type: str = Field(..., description="Type of consent (analytics, marketing, research, etc.)")
+    consent_version: str = Field(..., description="Version of consent terms")
+    event_data: Optional[Dict[str, Any]] = Field(None, description="Additional consent metadata")
+
+
+class ConsentStatusResponse(BaseModel):
+    """Response schema for user's current consent status."""
+    analytics_consent: bool = Field(description="Whether user has consented to analytics tracking")
+    marketing_consent: bool = Field(description="Whether user has consented to marketing communications")
+    research_consent: bool = Field(description="Whether user has consented to research data usage")
+    consent_version: str = Field(description="Current version of consent terms")
+    last_updated: str = Field(description="ISO 8601 timestamp of last consent update")
+    consent_history: List[Dict[str, Any]] = Field(description="History of consent events")
+
+
+class ConsentUpdateRequest(BaseModel):
+    """Schema for updating user consent preferences."""
+    analytics_consent: Optional[bool] = None
+    marketing_consent: Optional[bool] = None
+    research_consent: Optional[bool] = None
+
+
+# ============================================================================
+# Export Schemas (Issue #1057)
+# ============================================================================
+
+class ExportRequest(BaseModel):
+    """Schema for basic export requests."""
+    format: str = Field(
+        default="json",
+        pattern="^(json|csv|xml|html|pdf)$",
+        description="Export format. Supported: json, csv, xml, html, pdf"
+    )
+
+    @field_validator('format')
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        supported_formats = {'json', 'csv', 'xml', 'html', 'pdf'}
+        if v.lower() not in supported_formats:
+            raise ValueError(f"Unsupported format: {v}. Supported formats: {', '.join(sorted(supported_formats))}")
+        return v.lower()
+
+
+class ExportOptions(BaseModel):
+    """Schema for advanced export options."""
+    data_types: Optional[List[str]] = Field(
+        default=None,
+        description="List of data types to include in export"
+    )
+    include_metadata: Optional[bool] = Field(
+        default=True,
+        description="Whether to include metadata in the export"
+    )
+    anonymize: Optional[bool] = Field(
+        default=False,
+        description="Whether to anonymize sensitive data"
+    )
+
+    @field_validator('data_types')
+    @classmethod
+    def validate_data_types(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        
+        supported_data_types = {
+            'profile', 'journal', 'assessments', 'scores',
+            'satisfaction', 'settings', 'medical', 'strengths',
+            'emotional_patterns', 'responses'
+        }
+        
+        invalid_types = set(v) - supported_data_types
+        if invalid_types:
+            raise ValueError(f"Unsupported data types: {', '.join(sorted(invalid_types))}. Supported: {', '.join(sorted(supported_data_types))}")
+        
+        return v
+
+
+class ExportV2Request(BaseModel):
+    """Schema for V2 export requests with advanced options."""
+    format: str = Field(
+        ...,
+        pattern="^(json|csv|xml|html|pdf)$",
+        description="Export format. Supported: json, csv, xml, html, pdf"
+    )
+    options: Optional[ExportOptions] = Field(
+        default=None,
+        description="Advanced export options"
+    )
+
+    @field_validator('format')
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        supported_formats = {'json', 'csv', 'xml', 'html', 'pdf'}
+        if v.lower() not in supported_formats:
+            raise ValueError(f"Unsupported format: {v}. Supported formats: {', '.join(sorted(supported_formats))}")
+        return v.lower()
+
+
+class ExportResponse(BaseModel):
+    """Schema for export operation responses."""
+    job_id: Optional[str] = Field(None, description="Job ID for async exports")
+    export_id: Optional[str] = Field(None, description="Export ID for completed exports")
+    status: str = Field(..., description="Export status")
+    format: str = Field(..., description="Export format used")
+    filename: Optional[str] = Field(None, description="Generated filename")
+    download_url: Optional[str] = Field(None, description="Download URL for the export")
+    expires_at: Optional[str] = Field(None, description="ISO 8601 timestamp when export expires")
+    message: Optional[str] = Field(None, description="Status message")
+
+
+class AsyncExportRequest(BaseModel):
+    """Schema for async export requests."""
+    format: str = Field(
+        ...,
+        pattern="^(json|csv|xml|html|pdf)$",
+        description="Export format. Supported: json, csv, xml, html, pdf"
+    )
+    options: Optional[ExportOptions] = Field(
+        default=None,
+        description="Advanced export options"
+    )
+
+    @field_validator('format')
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        supported_formats = {'json', 'csv', 'xml', 'html', 'pdf'}
+        if v.lower() not in supported_formats:
+            raise ValueError(f"Unsupported format: {v}. Supported formats: {', '.join(sorted(supported_formats))}")
+        return v.lower()
+
+
+class AsyncPDFExportRequest(BaseModel):
+    """Schema for async PDF export requests."""
+    include_charts: bool = Field(
+        default=True,
+        description="Whether to include charts in the PDF"
+    )
+    data_types: Optional[List[str]] = Field(
+        default=None,
+        description="List of data types to include"
+    )
+
+    @field_validator('data_types')
+    @classmethod
+    def validate_data_types(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        
+        supported_data_types = {
+            'profile', 'journal', 'assessments', 'scores',
+            'satisfaction', 'settings', 'medical', 'strengths',
+            'emotional_patterns', 'responses'
+        }
+        
+        invalid_types = set(v) - supported_data_types
+        if invalid_types:
+            raise ValueError(f"Unsupported data types: {', '.join(sorted(invalid_types))}. Supported: {', '.join(sorted(supported_data_types))}")
+        
+        return v
+
+
+class AsyncExportResponse(BaseModel):
+    """Schema for async export operation responses."""
+    job_id: str = Field(..., description="Job ID for the async export")
+    status: str = Field(..., description="Export status")
+    poll_url: str = Field(..., description="URL to poll for status")
+    format: str = Field(..., description="Export format requested")

@@ -1,12 +1,6 @@
 """
 Enhanced Export Service with advanced data portability features.
-
-Implements:
-- Multiple export formats (JSON, CSV, XML, HTML, PDF)
-- Granular data selection and date range filtering
-- Export encryption with password protection
-- GDPR compliance with metadata and audit trails
-- Export history tracking
+Migrated to Async SQLAlchemy 2.0.
 """
 
 import os
@@ -18,20 +12,22 @@ import zipfile
 import io
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Tuple, Dict, Any, Set
 from pathlib import Path
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc, update, delete
 from cryptography.fernet import Fernet
 
 from ..models import (
     User, Score, JournalEntry, UserSettings,
     PersonalProfile, MedicalProfile, UserStrengths,
     UserEmotionalPatterns, SatisfactionRecord,
-    AssessmentResult, Response, ExportRecord
+    AssessmentResult, Response, ExportRecord, UserSession
 )
 from ..utils.file_validation import sanitize_filename, validate_file_path
 from ..utils.atomic import atomic_write
+from ..utils.distributed_lock import require_lock
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +52,7 @@ class ExportServiceV2:
 
     @staticmethod
     def _sanitize_csv_field(field: Any) -> str:
-        """
-        Sanitize CSV fields to prevent formula injection attacks.
-        Prepends ' to fields starting with =, +, -, or @.
-        """
+        """Sanitize CSV fields to prevent formula injection attacks."""
         if not isinstance(field, str):
             return str(field) if field is not None else ""
 
@@ -69,18 +62,14 @@ class ExportServiceV2:
 
     @classmethod
     def _get_safe_filepath(cls, username: str, ext: str) -> str:
-        """
-        Generate a safe, collision-resistant filepath.
-        Format: sanitize(username)_timestamp_shortuuid.ext
-        """
+        """Generate a safe, collision-resistant filepath."""
         cls.ensure_export_dir()
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         short_id = uuid.uuid4().hex[:8]
         safe_username = sanitize_filename(username)
 
         filename = f"{safe_username}_{timestamp}_{short_id}.{ext}"
-
         full_path = str(cls.EXPORT_DIR / filename)
 
         return validate_file_path(
@@ -90,30 +79,15 @@ class ExportServiceV2:
         )
 
     @classmethod
-    def generate_export(
+    @require_lock(name="export_v2_{user.id}_{format}", timeout=60)
+    async def generate_export(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         format: str,
         options: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, str]:
-        """
-        Generate an export file with advanced options.
-
-        Args:
-            db: Database session
-            user: User object
-            format: Export format ('json', 'csv', 'xml', 'html', 'pdf')
-            options: Export options including:
-                - date_range: Dict with 'start' and 'end' dates
-                - data_types: List of data types to include
-                - encrypt: Boolean to enable encryption
-                - password: Password for encryption
-                - include_metadata: Boolean to include GDPR metadata
-
-        Returns:
-            Tuple of (file_path, export_id)
-        """
+        """Generate an export file with advanced options."""
         options = options or {}
 
         if format.lower() not in cls.SUPPORTED_FORMATS:
@@ -121,18 +95,14 @@ class ExportServiceV2:
                 f"Invalid format '{format}'. Supported: {', '.join(cls.SUPPORTED_FORMATS)}"
             )
 
-        # Generate export ID
         export_id = uuid.uuid4().hex
-        timestamp = datetime.now()
+        timestamp = datetime.now(UTC)
 
-        # Fetch data based on options
-        data = cls._fetch_export_data(db, user, options)
+        data = await cls._fetch_export_data(db, user, options)
 
-        # Add export metadata
         metadata = cls._build_metadata(user, export_id, format, options, timestamp)
         data['_export_metadata'] = metadata
 
-        # Generate file based on format
         ext = format.lower()
         filepath = cls._get_safe_filepath(user.username, ext)
 
@@ -148,14 +118,12 @@ class ExportServiceV2:
             elif ext == 'pdf':
                 cls._write_pdf(filepath, data, user)
 
-            # Encrypt if requested
             if options.get('encrypt', False):
                 password = options.get('password')
                 if password:
                     filepath = cls._encrypt_export(filepath, password)
 
-            # Record export in database
-            cls._record_export(db, user, export_id, format, filepath, options, timestamp)
+            await cls._record_export(db, user, export_id, format, filepath, options, timestamp)
 
             logger.info(f"Export generated for {user.username}: {filepath}")
             return filepath, export_id
@@ -170,21 +138,17 @@ class ExportServiceV2:
             raise e
 
     @classmethod
-    def _fetch_export_data(
+    async def _fetch_export_data(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         options: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """
-        Fetch user data based on export options.
-        Implements granular data selection and date range filtering.
-        """
+        """Fetch user data based on export options."""
         data = {}
         data_types = set(options.get('data_types', list(cls.DATA_TYPES)))
         date_range = options.get('date_range', {})
 
-        # Parse date range
         start_date = None
         end_date = None
         if date_range.get('start'):
@@ -192,70 +156,52 @@ class ExportServiceV2:
         if date_range.get('end'):
             end_date = datetime.fromisoformat(date_range['end'])
 
-        # Helper for date filtering
-        def apply_date_filter(query, date_field):
-            if start_date:
-                query = query.filter(date_field >= start_date)
-            if end_date:
-                query = query.filter(date_field <= end_date)
-            return query
-
-        # 1. Profile Data
         if 'profile' in data_types:
-            data['profile'] = cls._fetch_profile_data(db, user)
+            data['profile'] = await cls._fetch_profile_data(db, user)
 
-        # 2. Medical Profile
         if 'medical' in data_types:
-            data['medical'] = cls._fetch_medical_data(db, user)
+            data['medical'] = await cls._fetch_medical_data(db, user)
 
-        # 3. Strengths
         if 'strengths' in data_types:
-            data['strengths'] = cls._fetch_strengths_data(db, user)
+            data['strengths'] = await cls._fetch_strengths_data(db, user)
 
-        # 4. Emotional Patterns
         if 'emotional_patterns' in data_types:
-            data['emotional_patterns'] = cls._fetch_emotional_patterns_data(db, user)
+            data['emotional_patterns'] = await cls._fetch_emotional_patterns_data(db, user)
 
-        # 5. Settings
         if 'settings' in data_types:
-            data['settings'] = cls._fetch_settings_data(db, user)
+            data['settings'] = await cls._fetch_settings_data(db, user)
 
-        # 6. Journal Entries
         if 'journal' in data_types:
-            data['journal'] = cls._fetch_journal_data(db, user, start_date, end_date)
+            data['journal'] = await cls._fetch_journal_data(db, user, start_date, end_date)
 
-        # 7. Assessment Scores
         if 'scores' in data_types:
-            data['scores'] = cls._fetch_scores_data(db, user, start_date, end_date)
+            data['scores'] = await cls._fetch_scores_data(db, user, start_date, end_date)
 
-        # 8. Assessment Results
         if 'assessments' in data_types:
-            data['assessments'] = cls._fetch_assessments_data(db, user, start_date, end_date)
+            data['assessments'] = await cls._fetch_assessments_data(db, user, start_date, end_date)
 
-        # 9. Satisfaction Records
         if 'satisfaction' in data_types:
-            data['satisfaction'] = cls._fetch_satisfaction_data(db, user, start_date, end_date)
+            data['satisfaction'] = await cls._fetch_satisfaction_data(db, user, start_date, end_date)
 
-        # 10. Question Responses
         if 'responses' in data_types:
-            data['responses'] = cls._fetch_responses_data(db, user, start_date, end_date)
+            data['responses'] = await cls._fetch_responses_data(db, user, start_date, end_date)
 
         return data
 
     @classmethod
-    def _fetch_profile_data(cls, db: Session, user: User) -> Dict[str, Any]:
+    async def _fetch_profile_data(cls, db: AsyncSession, user: User) -> Dict[str, Any]:
         """Fetch personal profile data."""
-        profile = db.query(PersonalProfile).filter(
-            PersonalProfile.user_id == user.id
-        ).first()
+        stmt = select(PersonalProfile).filter(PersonalProfile.user_id == user.id)
+        result = await db.execute(stmt)
+        profile = result.scalar_one_or_none()
 
         if not profile:
             return {}
 
         return {
             'username': user.username,
-            'created_at': user.created_at,
-            'last_login': user.last_login,
+            'created_at': user.created_at.isoformat() if isinstance(user.created_at, datetime) else user.created_at,
+            'last_login': user.last_login.isoformat() if isinstance(user.last_login, datetime) else user.last_login,
             'occupation': profile.occupation,
             'education': profile.education,
             'marital_status': profile.marital_status,
@@ -263,17 +209,17 @@ class ExportServiceV2:
             'bio': profile.bio,
             'email': profile.email,
             'phone': profile.phone,
-            'date_of_birth': profile.date_of_birth,
+            'date_of_birth': profile.date_of_birth.isoformat() if isinstance(profile.date_of_birth, datetime) else profile.date_of_birth,
             'gender': profile.gender,
             'address': profile.address,
         }
 
     @classmethod
-    def _fetch_medical_data(cls, db: Session, user: User) -> Dict[str, Any]:
+    async def _fetch_medical_data(cls, db: AsyncSession, user: User) -> Dict[str, Any]:
         """Fetch medical profile data."""
-        medical = db.query(MedicalProfile).filter(
-            MedicalProfile.user_id == user.id
-        ).first()
+        stmt = select(MedicalProfile).filter(MedicalProfile.user_id == user.id)
+        result = await db.execute(stmt)
+        medical = result.scalar_one_or_none()
 
         if not medical:
             return {}
@@ -291,11 +237,11 @@ class ExportServiceV2:
         }
 
     @classmethod
-    def _fetch_strengths_data(cls, db: Session, user: User) -> Dict[str, Any]:
+    async def _fetch_strengths_data(cls, db: AsyncSession, user: User) -> Dict[str, Any]:
         """Fetch strengths data."""
-        strengths = db.query(UserStrengths).filter(
-            UserStrengths.user_id == user.id
-        ).first()
+        stmt = select(UserStrengths).filter(UserStrengths.user_id == user.id)
+        result = await db.execute(stmt)
+        strengths = result.scalar_one_or_none()
 
         if not strengths:
             return {}
@@ -310,11 +256,11 @@ class ExportServiceV2:
         }
 
     @classmethod
-    def _fetch_emotional_patterns_data(cls, db: Session, user: User) -> Dict[str, Any]:
+    async def _fetch_emotional_patterns_data(cls, db: AsyncSession, user: User) -> Dict[str, Any]:
         """Fetch emotional patterns data."""
-        patterns = db.query(UserEmotionalPatterns).filter(
-            UserEmotionalPatterns.user_id == user.id
-        ).first()
+        stmt = select(UserEmotionalPatterns).filter(UserEmotionalPatterns.user_id == user.id)
+        result = await db.execute(stmt)
+        patterns = result.scalar_one_or_none()
 
         if not patterns:
             return {}
@@ -327,11 +273,11 @@ class ExportServiceV2:
         }
 
     @classmethod
-    def _fetch_settings_data(cls, db: Session, user: User) -> Dict[str, Any]:
+    async def _fetch_settings_data(cls, db: AsyncSession, user: User) -> Dict[str, Any]:
         """Fetch user settings."""
-        settings = db.query(UserSettings).filter(
-            UserSettings.user_id == user.id
-        ).first()
+        stmt = select(UserSettings).filter(UserSettings.user_id == user.id)
+        result = await db.execute(stmt)
+        settings = result.scalar_one_or_none()
 
         if not settings:
             return {}
@@ -345,29 +291,31 @@ class ExportServiceV2:
         }
 
     @classmethod
-    def _fetch_journal_data(
+    async def _fetch_journal_data(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         start_date: Optional[datetime],
         end_date: Optional[datetime]
     ) -> List[Dict[str, Any]]:
         """Fetch journal entries with date filtering."""
-        query = db.query(JournalEntry).filter(
+        stmt = select(JournalEntry).filter(
             JournalEntry.user_id == user.id,
             JournalEntry.is_deleted == False
         )
 
         if start_date:
-            query = query.filter(JournalEntry.entry_date >= start_date)
+            stmt = stmt.filter(JournalEntry.entry_date >= start_date)
         if end_date:
-            query = query.filter(JournalEntry.entry_date <= end_date)
+            stmt = stmt.filter(JournalEntry.entry_date <= end_date)
 
-        entries = query.order_by(JournalEntry.entry_date.desc()).all()
+        stmt = stmt.order_by(JournalEntry.entry_date.desc())
+        result = await db.execute(stmt)
+        entries = result.scalars().all()
 
         return [{
             'id': e.id,
-            'date': e.entry_date.isoformat() if e.entry_date else None,
+            'date': e.entry_date.isoformat() if isinstance(e.entry_date, datetime) else e.entry_date,
             'content': e.content,
             'sentiment_score': e.sentiment_score,
             'emotional_patterns': e.emotional_patterns,
@@ -378,25 +326,27 @@ class ExportServiceV2:
         } for e in entries]
 
     @classmethod
-    def _fetch_scores_data(
+    async def _fetch_scores_data(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         start_date: Optional[datetime],
         end_date: Optional[datetime]
     ) -> List[Dict[str, Any]]:
         """Fetch assessment scores."""
-        query = db.query(Score).filter(Score.user_id == user.id)
+        stmt = select(Score).join(UserSession, Score.session_id == UserSession.session_id).filter(UserSession.user_id == user.id)
 
         if start_date:
-            query = query.filter(Score.timestamp >= start_date)
+            stmt = stmt.filter(Score.timestamp >= start_date)
         if end_date:
-            query = query.filter(Score.timestamp <= end_date)
+            stmt = stmt.filter(Score.timestamp <= end_date)
 
-        scores = query.order_by(Score.timestamp.desc()).all()
+        stmt = stmt.order_by(Score.timestamp.desc())
+        result = await db.execute(stmt)
+        scores = result.scalars().all()
 
         return [{
-            'timestamp': s.timestamp.isoformat() if s.timestamp else None,
+            'timestamp': s.timestamp.isoformat() if isinstance(s.timestamp, datetime) else s.timestamp,
             'total_score': s.total_score,
             'sentiment_score': s.sentiment_score,
             'reflection_text': s.reflection_text,
@@ -406,50 +356,57 @@ class ExportServiceV2:
         } for s in scores]
 
     @classmethod
-    def _fetch_assessments_data(
+    async def _fetch_assessments_data(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         start_date: Optional[datetime],
         end_date: Optional[datetime]
     ) -> List[Dict[str, Any]]:
         """Fetch assessment results."""
-        query = db.query(AssessmentResult).filter(AssessmentResult.user_id == user.id)
+        stmt = select(AssessmentResult).filter(
+            AssessmentResult.user_id == user.id,
+            AssessmentResult.is_deleted == False
+        )
 
         if start_date:
-            query = query.filter(AssessmentResult.timestamp >= start_date)
+            stmt = stmt.filter(AssessmentResult.timestamp >= start_date)
         if end_date:
-            query = query.filter(AssessmentResult.timestamp <= end_date)
+            stmt = stmt.filter(AssessmentResult.timestamp <= end_date)
 
-        assessments = query.order_by(AssessmentResult.timestamp.desc()).all()
+        stmt = stmt.order_by(AssessmentResult.timestamp.desc())
+        result = await db.execute(stmt)
+        assessments = result.scalars().all()
 
         return [{
             'type': a.assessment_type,
-            'timestamp': a.timestamp.isoformat() if a.timestamp else None,
+            'timestamp': a.timestamp.isoformat() if isinstance(a.timestamp, datetime) else a.timestamp,
             'total_score': a.total_score,
             'details': a.details,
         } for a in assessments]
 
     @classmethod
-    def _fetch_satisfaction_data(
+    async def _fetch_satisfaction_data(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         start_date: Optional[datetime],
         end_date: Optional[datetime]
     ) -> List[Dict[str, Any]]:
         """Fetch satisfaction records."""
-        query = db.query(SatisfactionRecord).filter(SatisfactionRecord.user_id == user.id)
+        stmt = select(SatisfactionRecord).filter(SatisfactionRecord.user_id == user.id)
 
         if start_date:
-            query = query.filter(SatisfactionRecord.timestamp >= start_date)
+            stmt = stmt.filter(SatisfactionRecord.timestamp >= start_date)
         if end_date:
-            query = query.filter(SatisfactionRecord.timestamp <= end_date)
+            stmt = stmt.filter(SatisfactionRecord.timestamp <= end_date)
 
-        records = query.order_by(SatisfactionRecord.timestamp.desc()).all()
+        stmt = stmt.order_by(SatisfactionRecord.timestamp.desc())
+        result = await db.execute(stmt)
+        records = result.scalars().all()
 
         return [{
-            'timestamp': r.timestamp.isoformat() if r.timestamp else None,
+            'timestamp': r.timestamp.isoformat() if isinstance(r.timestamp, datetime) else r.timestamp,
             'category': r.satisfaction_category,
             'score': r.satisfaction_score,
             'positives': r.positive_factors,
@@ -458,27 +415,29 @@ class ExportServiceV2:
         } for r in records]
 
     @classmethod
-    def _fetch_responses_data(
+    async def _fetch_responses_data(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         start_date: Optional[datetime],
         end_date: Optional[datetime]
     ) -> List[Dict[str, Any]]:
         """Fetch question responses."""
-        query = db.query(Response).filter(Response.user_id == user.id)
+        stmt = select(Response).join(UserSession, Response.session_id == UserSession.session_id).filter(UserSession.user_id == user.id)
 
         if start_date:
-            query = query.filter(Response.timestamp >= start_date)
+            stmt = stmt.filter(Response.timestamp >= start_date)
         if end_date:
-            query = query.filter(Response.timestamp <= end_date)
+            stmt = stmt.filter(Response.timestamp <= end_date)
 
-        responses = query.order_by(Response.timestamp.desc()).all()
+        stmt = stmt.order_by(Response.timestamp.desc())
+        result = await db.execute(stmt)
+        responses = result.scalars().all()
 
         return [{
             'question_id': r.question_id,
             'response_value': r.response_value,
-            'timestamp': r.timestamp.isoformat() if r.timestamp else None,
+            'timestamp': r.timestamp.isoformat() if isinstance(r.timestamp, datetime) else r.timestamp,
             'age_group': r.age_group,
         } for r in responses]
 
@@ -506,14 +465,14 @@ class ExportServiceV2:
             'data_controller': 'Soul Sense EQ Test',
             'purpose': 'Data portability and user right to access (GDPR Article 15)',
             'data_lineage': {
-                'sources': ['SQLite database', 'User inputs'],
-                'processing_history': ['Collected via web interface', 'Stored locally']
+                'sources': ['PostgreSQL database', 'User inputs'],
+                'processing_history': ['Collected via web interface', 'Stored in database']
             }
         }
 
     @classmethod
     def _write_json(cls, filepath: str, data: Dict[str, Any]):
-        """Write data to JSON file with GDPR metadata."""
+        """Write data to JSON file."""
         with atomic_write(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
 
@@ -539,13 +498,11 @@ class ExportServiceV2:
                     writer.writerow(safe)
                 zip_file.writestr(filename, buffer.getvalue().encode('utf-8-sig'))
 
-            # Write metadata
             if '_export_metadata' in data:
                 meta_buffer = io.StringIO()
                 json.dump(data['_export_metadata'], meta_buffer, indent=2, default=str)
                 zip_file.writestr('metadata.json', meta_buffer.getvalue().encode('utf-8'))
 
-            # Write each data type as separate CSV
             for key, value in data.items():
                 if key == '_export_metadata':
                     continue
@@ -559,10 +516,9 @@ class ExportServiceV2:
 
     @classmethod
     def _write_xml(cls, filepath: str, data: Dict[str, Any]):
-        """Write data to XML file with proper schema."""
+        """Write data to XML file."""
         root = ET.Element('SoulSenseExport')
 
-        # Add metadata
         if '_export_metadata' in data:
             meta_elem = ET.SubElement(root, 'ExportMetadata')
             for key, value in data['_export_metadata'].items():
@@ -572,7 +528,6 @@ class ExportServiceV2:
                 else:
                     child.text = str(value)
 
-        # Add data sections
         for key, value in data.items():
             if key == '_export_metadata':
                 continue
@@ -596,7 +551,6 @@ class ExportServiceV2:
                     else:
                         field.text = str(item_value)
 
-        # Pretty print
         xml_str = minidom.parseString(ET.tostring(root)).toprettyxml(indent="  ")
 
         with atomic_write(filepath, "w", encoding="utf-8") as f:
@@ -606,8 +560,6 @@ class ExportServiceV2:
     def _write_html(cls, filepath: str, data: Dict[str, Any]):
         """Write data to self-contained HTML file."""
         html_parts = []
-
-        # HTML header with embedded styles
         html_parts.append("""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -673,55 +625,21 @@ class ExportServiceV2:
             width: 100%;
             box-sizing: border-box;
         }
-        @media print {
-            body { background: white; }
-            .section { box-shadow: none; border: 1px solid #ddd; }
-        }
     </style>
-    <script>
-        function searchTable() {
-            var input = document.getElementById('searchInput');
-            var filter = input.value.toUpperCase();
-            var tables = document.getElementsByTagName('table');
-
-            for (var t = 0; t < tables.length; t++) {
-                var tr = tables[t].getElementsByTagName('tr');
-                for (var i = 1; i < tr.length; i++) {
-                    var td = tr[i].getElementsByTagName('td');
-                    var found = false;
-                    for (var j = 0; j < td.length; j++) {
-                        if (td[j]) {
-                            var txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-                    tr[i].style.display = found ? "" : "none";
-                }
-            }
-        }
-    </script>
 </head>
 <body>
     <div class="header">
         <h1>Soul Sense Data Export</h1>
         <p>Comprehensive export of your emotional intelligence data</p>
     </div>
-
-    <input type="text" id="searchInput" class="search-box"
-           placeholder="Search in all tables..." onkeyup="searchTable()">
 """)
 
-        # Add metadata section
         if '_export_metadata' in data:
-            html_parts.append('<div class="section"><h2>Export Metadata</div><div class="metadata">')
+            html_parts.append('<div class="section"><h2>Export Metadata</h2><div class="metadata">')
             for key, value in data['_export_metadata'].items():
                 html_parts.append(f'<p><strong>{key}:</strong> {value}</p>')
             html_parts.append('</div></div>')
 
-        # Add data sections
         for key, value in data.items():
             if key == '_export_metadata':
                 continue
@@ -730,13 +648,11 @@ class ExportServiceV2:
 
             if isinstance(value, list) and value:
                 html_parts.append('<table><thead><tr>')
-                # Headers from first item
                 for header in value[0].keys():
                     html_parts.append(f'<th>{header.replace("_", " ").title()}</th>')
                 html_parts.append('</tr></thead><tbody>')
 
-                # Rows
-                for item in value[:100]:  # Limit to 100 items for HTML
+                for item in value[:100]:
                     html_parts.append('<tr>')
                     for val in item.values():
                         html_parts.append(f'<td>{val if val else "-"}</td>')
@@ -754,30 +670,24 @@ class ExportServiceV2:
 
             html_parts.append('</div>')
 
-        # Close HTML
-        html_parts.append("""
-</body>
-</html>""")
+        html_parts.append("</body></html>")
 
         with atomic_write(filepath, "w", encoding="utf-8") as f:
             f.write(''.join(html_parts))
 
     @classmethod
     def _write_pdf(cls, filepath: str, data: Dict[str, Any], user: User):
-        """Write data to enhanced PDF with charts and visualizations."""
+        """Write data to PDF."""
         try:
             from reportlab.lib import colors
             from reportlab.lib.pagesizes import letter
             from reportlab.lib.units import inch
             from reportlab.platypus import (
                 SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-                PageBreak, KeepTogether
+                PageBreak
             )
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.enums import TA_CENTER, TA_LEFT
-            from reportlab.graphics.shapes import Drawing
-            from reportlab.graphics.charts.linecharts import HorizontalLineChart
-            from reportlab.graphics.charts.barcharts import VerticalBarChart
+            from reportlab.lib.enums import TA_CENTER
         except ImportError:
             logger.error("reportlab not installed. Cannot generate PDF.")
             raise ValueError("PDF export requires reportlab library")
@@ -790,7 +700,6 @@ class ExportServiceV2:
             topMargin=72, bottomMargin=72
         )
 
-        # Styles
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
             'CustomTitle',
@@ -810,13 +719,7 @@ class ExportServiceV2:
             spaceAfter=10,
         )
 
-        normal_style = styles['Normal']
-        normal_style.fontSize = 10
-        normal_style.spaceAfter = 6
-
         story = []
-
-        # Cover page
         story.append(Spacer(1, 2*inch))
         story.append(Paragraph("Soul Sense", title_style))
         story.append(Paragraph("Advanced Data Export", ParagraphStyle(
@@ -824,7 +727,6 @@ class ExportServiceV2:
         )))
         story.append(Spacer(1, 1*inch))
 
-        # Metadata table
         if '_export_metadata' in data:
             meta = data['_export_metadata']
             meta_data = [
@@ -845,7 +747,6 @@ class ExportServiceV2:
             story.append(t_meta)
             story.append(PageBreak())
 
-        # Data sections
         for key, value in data.items():
             if key == '_export_metadata':
                 continue
@@ -853,25 +754,10 @@ class ExportServiceV2:
             story.append(Paragraph(key.replace("_", " ").title(), h2_style))
 
             if isinstance(value, list) and value:
-                # Limit to top items
                 display_items = value[:50]
-
-                if key == 'scores' and len(display_items) > 1:
-                    # Add trend chart for scores
-                    chart_data = cls._create_score_chart(display_items)
-                    if chart_data:
-                        story.append(chart_data)
-                        story.append(Spacer(1, 20))
-
-                # Table header
                 headers = list(display_items[0].keys())
-                story.append(Paragraph(
-                    f"Showing {len(display_items)} of {len(value)} entries",
-                    normal_style
-                ))
-
                 table_data = [headers]
-                for item in display_items[:20]:  # Limit table rows
+                for item in display_items[:20]:
                     row = [str(item.get(h, ''))[:50] for h in headers]
                     table_data.append(row)
 
@@ -897,94 +783,32 @@ class ExportServiceV2:
                 story.append(t)
                 story.append(Spacer(1, 20))
 
-        # Page footer
-        def on_page(canvas, doc):
-            canvas.saveState()
-            canvas.setFont('Helvetica', 9)
-            canvas.setFillColor(colors.grey)
-            page_num = canvas.getPageNumber()
-            canvas.drawCentredString(letter[0]/2, 0.5*inch, f"Page {page_num}")
-            canvas.drawRightString(letter[0]-0.8*inch, 0.5*inch, "Confidential")
-            canvas.restoreState()
-
-        doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+        doc.build(story)
 
         with open(filepath, 'wb') as f:
             f.write(buffer.getvalue())
 
     @classmethod
-    def _create_score_chart(cls, scores: List[Dict[str, Any]]) -> Optional[Any]:
-        """Create a trend chart for scores."""
-        try:
-            from reportlab.graphics.shapes import Drawing
-            from reportlab.graphics.charts.lineplots import LinePlot
-        except ImportError:
-            return None
-
-        if len(scores) < 2:
-            return None
-
-        drawing = Drawing(400, 200)
-
-        # Extract score data
-        data = []
-        for i, score in enumerate(reversed(scores[-20:])):  # Last 20 scores
-            total = score.get('total_score', 0)
-            sentiment = score.get('sentiment_score', 0)
-            data.append((i, total, sentiment))
-
-        if not data:
-            return None
-
-        # Create line chart
-        try:
-            chart = LinePlot()
-            chart.data = [ [(x, y) for x, y, _ in data] ]
-            chart.joinedLines = 1
-
-            chart.width = 350
-            chart.height = 150
-            chart.x = 25
-            chart.y = 25
-
-            drawing.add(chart)
-
-            return drawing
-        except:
-            return None
-
-    @classmethod
     def _encrypt_export(cls, filepath: str, password: str) -> str:
-        """
-        Encrypt export file with password.
-        Returns new filepath with .encrypted extension.
-        """
+        """Encrypt export file."""
         try:
-            # Generate key from password
             key = Fernet.generate_key()
             fernet = Fernet(key)
 
-            # Read original file
             with open(filepath, 'rb') as f:
                 original_data = f.read()
 
-            # Encrypt data
             encrypted_data = fernet.encrypt(original_data)
-
-            # Write to new file
             encrypted_path = filepath + '.encrypted'
+            
             with atomic_write(encrypted_path, 'wb') as f:
                 f.write(encrypted_data)
 
-            # Store key securely (in production, use proper key management)
-            # For now, we'll include it in the filename (not recommended for production)
             key_path = filepath + '.key'
             with atomic_write(key_path, 'wb') as f:
                 f.write(key)
 
-            # Remove original unencrypted file
             os.remove(filepath)
-
             return encrypted_path
 
         except Exception as e:
@@ -992,9 +816,9 @@ class ExportServiceV2:
             raise ValueError(f"Failed to encrypt export: {e}")
 
     @classmethod
-    def _record_export(
+    async def _record_export(
         cls,
-        db: Session,
+        db: AsyncSession,
         user: User,
         export_id: str,
         format: str,
@@ -1002,7 +826,7 @@ class ExportServiceV2:
         options: Dict[str, Any],
         timestamp: datetime
     ):
-        """Record export in database for audit trail."""
+        """Record export in database."""
         try:
             date_range = options.get('date_range', {})
 
@@ -1017,109 +841,102 @@ class ExportServiceV2:
                 is_encrypted=options.get('encrypt', False),
                 status='completed',
                 created_at=timestamp,
-                expires_at=timestamp + timedelta(hours=48)  # Exports expire in 48 hours
+                expires_at=timestamp + timedelta(hours=48)
             )
 
             db.add(export_record)
-            db.commit()
+            await db.commit()
 
         except Exception as e:
             logger.error(f"Failed to record export: {e}")
-            db.rollback()
+            await db.rollback()
 
     @classmethod
-    def get_export_history(cls, db: Session, user: User, limit: int = 50) -> List[Dict[str, Any]]:
-        """
-        Get export history for a user.
-        """
-        exports = db.query(ExportRecord).filter(
+    async def get_export_history(cls, db: AsyncSession, user: User, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get export history for a user."""
+        stmt = select(ExportRecord).filter(
             ExportRecord.user_id == user.id
         ).order_by(
-            ExportRecord.created_at.desc()
-        ).limit(limit).all()
+            desc(ExportRecord.created_at)
+        ).limit(limit)
+        
+        result = await db.execute(stmt)
+        exports = result.scalars().all()
 
         return [{
             'export_id': e.export_id,
             'format': e.format,
-            'created_at': e.created_at.isoformat() if e.created_at else None,
-            'expires_at': e.expires_at.isoformat() if e.expires_at else None,
+            'created_at': e.created_at.isoformat() if isinstance(e.created_at, datetime) else e.created_at,
+            'expires_at': e.expires_at.isoformat() if isinstance(e.expires_at, datetime) else e.expires_at,
             'is_encrypted': e.is_encrypted,
             'status': e.status,
             'file_path': e.file_path,
         } for e in exports]
 
     @classmethod
-    def delete_export(cls, db: Session, user: User, export_id: str) -> bool:
-        """
-        Delete an export file and its record.
-        """
-        export = db.query(ExportRecord).filter(
+    async def delete_export(cls, db: AsyncSession, user: User, export_id: str) -> bool:
+        """Delete an export file and its record."""
+        stmt = select(ExportRecord).filter(
             ExportRecord.export_id == export_id,
             ExportRecord.user_id == user.id
-        ).first()
+        )
+        result = await db.execute(stmt)
+        export = result.scalar_one_or_none()
 
         if not export:
             return False
 
-        # Delete file
         try:
             if os.path.exists(export.file_path):
                 os.remove(export.file_path)
 
-            # Also delete key file if encrypted
             if export.is_encrypted and os.path.exists(export.file_path + '.key'):
                 os.remove(export.file_path + '.key')
 
         except Exception as e:
             logger.error(f"Failed to delete export file: {e}")
 
-        # Delete database record
-        db.delete(export)
-        db.commit()
+        await db.delete(export)
+        await db.commit()
 
         return True
 
     @classmethod
     def validate_export_access(cls, user: User, filename: str) -> bool:
-        """
-        Verify that a user is authorized to access the given filename.
-        """
+        """Verify that a user is authorized to access the given filename."""
         safe_username = sanitize_filename(user.username)
         if not filename.startswith(f"{safe_username}_"):
             logger.warning(f"Access denied: User {user.username} tried to access {filename}")
             return False
-
         return True
 
     @classmethod
-    def cleanup_old_exports(cls, db: Session, max_age_hours: int = 48):
+    async def cleanup_old_exports(cls, db: AsyncSession, max_age_hours: int = 48):
         """Delete export files older than max_age_hours."""
         try:
             if not cls.EXPORT_DIR.exists():
                 return
 
-            cutoff = datetime.now() - timedelta(hours=max_age_hours)
+            cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
 
-            # Delete expired files
             for p in cls.EXPORT_DIR.glob("*"):
                 if p.is_file():
                     try:
-                        mtime = datetime.fromtimestamp(p.stat().st_mtime)
+                        mtime = datetime.fromtimestamp(p.stat().st_mtime, UTC)
                         if mtime < cutoff:
                             p.unlink()
                             logger.info(f"Deleted old export: {p.name}")
                     except Exception as e:
                         logger.warning(f"Failed to delete {p.name}: {e}")
 
-            # Mark database records as expired
-            db.query(ExportRecord).filter(
+            stmt = update(ExportRecord).filter(
                 ExportRecord.expires_at < cutoff,
                 ExportRecord.status == 'completed'
-            ).update({
-                'status': 'expired'
-            })
-            db.commit()
+            ).values(status='expired')
+            
+            await db.execute(stmt)
+            await db.commit()
 
         except Exception as e:
             logger.error(f"Cleanup failed: {e}")
-            db.rollback()
+            await db.rollback()

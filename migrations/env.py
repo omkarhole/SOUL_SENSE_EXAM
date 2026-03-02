@@ -1,7 +1,6 @@
 # migrations/env.py
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool, event, text
 from alembic import context
 import os
 import sys
@@ -69,7 +68,19 @@ def run_migrations_online() -> None:
         target_url = DATABASE_URL
         
     from sqlalchemy import create_engine
-    connectable = create_engine(target_url)
+    connect_args = {}
+    if 'sqlite' in target_url:
+        connect_args = {'timeout': 60}
+        
+    connectable = create_engine(target_url, connect_args=connect_args)
+
+    @event.listens_for(connectable, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        # Using DELETE mode instead of WAL for better compatibility with virtual/network drives
+        cursor.execute("PRAGMA journal_mode=DELETE")
+        cursor.execute("PRAGMA synchronous=OFF")
+        cursor.close()
 
     with connectable.connect() as connection:
         # PR 1 Fix: Disable foreign keys for SQLite batch migrations

@@ -1,7 +1,7 @@
 import { ApiError } from './errors';
 import { sanitizeError, logError, shouldLogout, isRetryableError } from '../utils/errorHandler';
 import { retryRequest } from '../utils/requestUtils';
-import { getSession, saveSession, isTokenExpired } from '../utils/sessionStorage';
+import { getSession, saveSession, isTokenExpired, isSessionTimedOut, updateLastActivity } from '../utils/sessionStorage';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
 
@@ -59,15 +59,41 @@ function handleAuthFailure(): void {
   window.dispatchEvent(new CustomEvent('auth-failure'));
 }
 
+/**
+ * Check if session has timed out due to inactivity
+ * Issue #999: Session timeout handling
+ */
+function checkSessionTimeout(): boolean {
+  if (typeof window === 'undefined') return false;
+  
+  if (isSessionTimedOut()) {
+    console.warn('Session timed out due to inactivity');
+    handleAuthFailure();
+    return true;
+  }
+  
+  // Update last activity on API call
+  updateLastActivity();
+  return false;
+}
+
 export async function apiClient<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const {
-    timeout = 10000,
+    timeout = 30000,
     skipAuth = false,
     retry = false,
     maxRetries = 3,
     responseType = 'json',
     ...fetchOptions
   } = options;
+
+  // Issue #999: Check for session timeout on authenticated requests
+  if (!skipAuth && checkSessionTimeout()) {
+    throw new ApiError(401, {
+      message: 'Session expired due to inactivity. Please log in again.',
+      code: 'SESSION_TIMEOUT',
+    });
+  }
 
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
@@ -90,6 +116,7 @@ export async function apiClient<T>(endpoint: string, options: RequestOptions = {
     try {
       const response = await fetch(url, {
         credentials: 'include',
+        cache: options.cache || (endpoint.includes('/captcha') ? 'no-store' : undefined),
         ...fetchOptions,
         headers,
         signal: controller.signal,
@@ -110,6 +137,11 @@ export async function apiClient<T>(endpoint: string, options: RequestOptions = {
         // Handle 401 - Unauthorized
         if (response.status === 401) {
           if (options._isRetry) {
+            throw apiError;
+          }
+
+          // Do not attempt refresh for explicit auth endpoints (login, register) or if skipAuth is true
+          if (endpoint.includes('/auth/login') || endpoint.includes('/auth/register') || skipAuth) {
             throw apiError;
           }
 

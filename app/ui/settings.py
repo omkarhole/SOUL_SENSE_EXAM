@@ -458,19 +458,18 @@ class SettingsManager:
         def update_attempts_label():
             """Update the attempts label based on remaining attempts."""
             try:
-                from app.db import get_session
+                from app.db import safe_db_context
                 from app.models import User
-                session = get_session()
-                user = session.query(User).filter_by(username=self.app.username).first()
-                if user:
-                    from app.auth.otp_manager import OTPManager
-                    remaining = OTPManager.get_remaining_attempts(user.id, "2FA_SETUP", db_session=session)
-                    if remaining > 0:
-                        attempts_label.config(text=f"{remaining} attempt(s) remaining", fg="#F59E0B")
-                    else:
-                        attempts_label.config(text="Code locked - Please resend", fg="#EF4444")
-                        entry.config(state="disabled")
-                session.close()
+                with safe_db_context() as session:
+                    user = session.query(User).filter_by(username=self.app.username).first()
+                    if user:
+                        from app.auth.otp_manager import OTPManager
+                        remaining = OTPManager.get_remaining_attempts(user.id, "2FA_SETUP", db_session=session)
+                        if remaining > 0:
+                            attempts_label.config(text=f"{remaining} attempt(s) remaining", fg="#F59E0B")
+                        else:
+                            attempts_label.config(text="Code locked - Please resend", fg="#EF4444")
+                            entry.config(state="disabled")
             except Exception:
                 pass
         

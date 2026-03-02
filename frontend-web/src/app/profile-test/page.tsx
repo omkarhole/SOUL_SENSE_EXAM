@@ -2,6 +2,7 @@
 
 import { ProfileCard } from '@/components/profile';
 import { PersonalProfile } from '@/lib/api/profile';
+import { toast } from '@/lib/toast';
 
 const mockProfile: PersonalProfile = {
   first_name: 'John',
@@ -11,7 +12,7 @@ const mockProfile: PersonalProfile = {
   occupation: 'Software Engineer',
   education_level: 'Bachelor\'s Degree',
   bio: 'Passionate about creating meaningful user experiences and exploring the depths of emotional intelligence. Always learning and growing through self-reflection and mindfulness practices.',
-  avatar_url: 'https://ui-avatars.com/api/?name=John+Doe&background=0D8ABC&color=fff',
+  avatar_path: 'john_doe_avatar.png',
   member_since: '2023-06-15T00:00:00Z',
   eq_stats: {
     last_score: 85,
@@ -44,7 +45,7 @@ export default function ProfileTestPage() {
               user={mockUser}
               variant="full"
               editable={true}
-              onEdit={() => alert('Edit clicked!')}
+              onEdit={() => toast.info('Edit clicked!')}
             />
           </div>
 

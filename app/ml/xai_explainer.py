@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime
 from sqlalchemy import text
-from app.db import get_engine
+from app.db import safe_db_context, get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +14,11 @@ class SoulSenseXAI:
 
     def __init__(self):
         """Initialize the XAI explainer with unified database engine."""
-        self.engine = get_engine()
-        
         # Create table for explanations if not exists (health check/init)
-        with self.engine.connect() as conn:
-            if 'postgresql' in str(self.engine.url):
-                conn.execute(text("""
+        with safe_db_context() as session:
+            engine = get_engine()
+            if 'postgresql' in str(engine.url):
+                session.execute(text("""
                 CREATE TABLE IF NOT EXISTS explanations (
                     id SERIAL PRIMARY KEY,
                     user_id INTEGER,
@@ -30,7 +29,7 @@ class SoulSenseXAI:
                 )
                 """))
             else:
-                conn.execute(text("""
+                session.execute(text("""
                 CREATE TABLE IF NOT EXISTS explanations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -41,7 +40,6 @@ class SoulSenseXAI:
                     FOREIGN KEY (user_id) REFERENCES scores (id)
                 )
                 """))
-            conn.commit()
         
         # Question analysis mapping
         self.question_analysis = {
@@ -155,8 +153,8 @@ class SoulSenseXAI:
     
     def get_detailed_analysis(self, user_id):
         """Get detailed analysis for a specific user."""
-        with self.engine.connect() as conn:
-            result = conn.execute(text("""
+        with safe_db_context() as session:
+            result = session.execute(text("""
             SELECT username, age, total_score FROM scores WHERE id = :user_id
             """), {"user_id": user_id})
             user = result.fetchone()
@@ -167,7 +165,7 @@ class SoulSenseXAI:
             username, age, total_score = user
             
             # Get all explanations for this user
-            result = conn.execute(text("""
+            result = session.execute(text("""
             SELECT explanation_text FROM explanations 
             WHERE user_id = :user_id ORDER BY timestamp DESC
             """), {"user_id": user_id})
@@ -199,8 +197,8 @@ class SoulSenseXAI:
     
     def _analyze_trends(self, user_id):
         """Analyze score trends over time."""
-        with self.engine.connect() as conn:
-            result = conn.execute(text("""
+        with safe_db_context() as session:
+            result = session.execute(text("""
             SELECT total_score, timestamp FROM scores 
             WHERE id = :user_id ORDER BY id DESC LIMIT 5
             """), {"user_id": user_id})
@@ -225,8 +223,8 @@ class SoulSenseXAI:
     
     def save_explanation(self, user_id, total_score, explanation_text):
         """Save explanation to database."""
-        with self.engine.connect() as conn:
-            conn.execute(text("""
+        with safe_db_context() as session:
+            session.execute(text("""
             INSERT INTO explanations (user_id, timestamp, total_score, explanation_text)
             VALUES (:user_id, :timestamp, :total_score, :explanation_text)
             """), {
@@ -235,15 +233,15 @@ class SoulSenseXAI:
                 "total_score": total_score, 
                 "explanation_text": explanation_text
             })
-            conn.commit()
     
     def get_last_user_id(self):
         """Get the last inserted user ID."""
-        with self.engine.connect() as conn:
-            if 'postgresql' in str(self.engine.url):
-                result = conn.execute(text("SELECT lastval()"))
+        with safe_db_context() as session:
+            engine = get_engine()
+            if 'postgresql' in str(engine.url):
+                result = session.execute(text("SELECT lastval()"))
             else:
-                result = conn.execute(text("SELECT last_insert_rowid()"))
+                result = session.execute(text("SELECT last_insert_rowid()"))
             return result.fetchone()[0]
     
     def close(self):

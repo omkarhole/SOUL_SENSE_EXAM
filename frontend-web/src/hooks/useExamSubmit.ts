@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { examsApi, ExamSubmissionRequest, ExamSubmissionResponse } from '@/lib/api/exams';
 import { ApiError } from '@/lib/api/errors';
 
@@ -13,6 +14,7 @@ interface UseExamSubmitReturn {
 }
 
 export function useExamSubmit(): UseExamSubmitReturn {
+  const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExamSubmissionResponse | null>(null);
@@ -35,6 +37,11 @@ export function useExamSubmit(): UseExamSubmitReturn {
 
         setError(null); // Clear error on success
         setResult(examResult);
+
+        // Invalidate dashboard queries to refresh data
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+        queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+
         return examResult;
       } catch (err) {
         if (!isMountedRef.current) return null;

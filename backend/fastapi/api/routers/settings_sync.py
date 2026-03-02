@@ -1,43 +1,30 @@
 """
 Settings Synchronization Router
-
-REST API endpoints for syncing user preferences and settings across clients.
-Implements Issue #396: Create Settings Synchronization API
-
-Endpoints:
-    GET    /api/sync/settings       - Get all settings for authenticated user
-    GET    /api/sync/settings/{key} - Get single setting by key
-    PUT    /api/sync/settings/{key} - Upsert setting (with optional conflict detection)
-    DELETE /api/sync/settings/{key} - Delete a setting
-    POST   /api/sync/settings/batch - Batch upsert settings
+Migrated to Async SQLAlchemy 2.0.
 """
 
 from typing import Annotated, List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from ..schemas import (
-    SyncSettingCreate,
     SyncSettingUpdate,
     SyncSettingResponse,
     SyncSettingBatchRequest,
-    SyncSettingBatchResponse,
-    SyncSettingConflictResponse
+    SyncSettingBatchResponse
 )
 from ..services.settings_sync_service import SettingsSyncService
 from ..routers.auth import get_current_user
 from ..services.db_service import get_db
 from ..models import User
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core import NotFoundError, ConflictError
 
 router = APIRouter(tags=["Settings Sync"])
 
 
-def get_settings_sync_service():
-    """Dependency to get SettingsSyncService with database session."""
-    db = next(get_db())
-    try:
-        yield SettingsSyncService(db)
-    finally:
-        db.close()
+async def get_settings_sync_service(db: AsyncSession = Depends(get_db)):
+    """Dependency to get SettingsSyncService with async database session."""
+    return SettingsSyncService(db)
 
 
 # ============================================================================
@@ -49,14 +36,8 @@ async def get_all_settings(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[SettingsSyncService, Depends(get_settings_sync_service)]
 ):
-    """
-    Get all sync settings for the authenticated user.
-    
-    Returns a list of all key-value settings stored for the user.
-    
-    **Authentication Required**
-    """
-    settings = service.get_all_settings(current_user.id)
+    """Get all sync settings for the authenticated user."""
+    settings = await service.get_all_settings(current_user.id)
     return [
         SyncSettingResponse(
             key=s.key,
@@ -74,20 +55,10 @@ async def get_setting(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[SettingsSyncService, Depends(get_settings_sync_service)]
 ):
-    """
-    Get a single setting by key.
-    
-    **Path Parameters:**
-    - key: The setting key to retrieve
-    
-    **Authentication Required**
-    """
-    setting = service.get_setting(current_user.id, key)
+    """Get a single setting by key."""
+    setting = await service.get_setting(current_user.id, key)
     if not setting:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Setting '{key}' not found"
-        )
+        raise NotFoundError(resource="Setting", resource_id=key)
     
     return SyncSettingResponse(
         key=setting.key,
@@ -104,25 +75,8 @@ async def upsert_setting(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[SettingsSyncService, Depends(get_settings_sync_service)]
 ):
-    """
-    Create or update a setting by key.
-    
-    **Path Parameters:**
-    - key: The setting key
-    
-    **Request Body:**
-    - value: The setting value (any JSON-serializable value)
-    - expected_version: Optional. If provided, update only succeeds if current 
-      version matches. Returns 409 Conflict if versions don't match.
-    
-    **Conflict Detection:**
-    Use the `expected_version` field for optimistic locking. When provided,
-    the server will only update if the current version matches the expected version.
-    This prevents concurrent updates from overwriting each other.
-    
-    **Authentication Required**
-    """
-    setting, success, error = service.upsert_setting(
+    """Create or update a setting by key."""
+    setting, success, error = await service.upsert_setting(
         user_id=current_user.id,
         key=key,
         value=update.value,
@@ -130,15 +84,14 @@ async def upsert_setting(
     )
     
     if not success:
-        # Return 409 Conflict with current value
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": error,
+        raise ConflictError(
+            message=error or "Setting version conflict",
+            code="SETTING_VERSION_CONFLICT",
+            details=[{
                 "key": key,
                 "current_version": setting.version,
                 "current_value": setting.value
-            }
+            }]
         )
     
     return SyncSettingResponse(
@@ -155,20 +108,10 @@ async def delete_setting(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[SettingsSyncService, Depends(get_settings_sync_service)]
 ):
-    """
-    Delete a setting by key.
-    
-    **Path Parameters:**
-    - key: The setting key to delete
-    
-    **Authentication Required**
-    """
-    deleted = service.delete_setting(current_user.id, key)
+    """Delete a setting by key."""
+    deleted = await service.delete_setting(current_user.id, key)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Setting '{key}' not found"
-        )
+        raise NotFoundError(resource="Setting", resource_id=key)
     return None
 
 
@@ -178,25 +121,13 @@ async def batch_upsert_settings(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[SettingsSyncService, Depends(get_settings_sync_service)]
 ):
-    """
-    Batch create/update multiple settings.
-    
-    **Request Body:**
-    - settings: List of settings with 'key' and 'value' fields
-    
-    **Behavior:**
-    - Processes all settings, continuing even if some have conflicts
-    - Returns successfully updated settings and list of conflicting keys
-    - Each setting is version-incremented independently
-    
-    **Authentication Required**
-    """
+    """Batch create/update multiple settings."""
     settings_data = [
         {"key": s.key, "value": s.value}
         for s in batch.settings
     ]
     
-    successful, conflicts = service.batch_upsert_settings(
+    successful, conflicts = await service.batch_upsert_settings(
         user_id=current_user.id,
         settings=settings_data
     )

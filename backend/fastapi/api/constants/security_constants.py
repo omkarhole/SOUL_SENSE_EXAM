@@ -10,3 +10,6 @@ BCRYPT_ROUNDS = 12
 # Token Expiration
 ACCESS_TOKEN_EXPIRE_MINUTES = 60  # Short-lived access tokens
 REFRESH_TOKEN_EXPIRE_DAYS = 7     # Longer-lived refresh tokens
+
+# Password Policy
+PASSWORD_HISTORY_LIMIT = 5        # Number of previous passwords to remember

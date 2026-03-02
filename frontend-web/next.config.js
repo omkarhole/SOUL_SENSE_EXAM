@@ -25,7 +25,7 @@ const nextConfig = {
 
   // Performance optimizations
   experimental: {
-    optimizeCss: true,
+    // optimizeCss: true, // Only available for "pages" directory
   },
 
   // Headers for better caching and security
@@ -52,23 +52,12 @@ const nextConfig = {
       },
     ];
   },
-
-  // Bundle analyzer (run with ANALYZE=true)
-  ...(process.env.ANALYZE === 'true' && {
-    webpack: (config, { isServer }) => {
-      if (!isServer) {
-        const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
-        config.plugins.push(
-          new BundleAnalyzerPlugin({
-            analyzerMode: 'static',
-            reportFilename: './analyze/client.html',
-            openAnalyzer: false,
-          })
-        );
-      }
-      return config;
-    },
-  }),
 };
 
-module.exports = nextConfig;
+// Wrap with bundle analyzer if ANALYZE=true
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+  openAnalyzer: false,
+});
+
+module.exports = withBundleAnalyzer(nextConfig);

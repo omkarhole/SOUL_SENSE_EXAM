@@ -31,18 +31,19 @@ def fetch_data(conn):
     """Fetch scores and journal entries, merging them on user_id."""
     query = """
     SELECT 
-        s.user_id, 
+        us.user_id, 
         s.total_score, 
         s.age,
         j.sentiment_score
     FROM scores s
-    JOIN journal_entries j ON s.user_id = j.user_id
+    JOIN user_sessions us ON s.session_id = us.session_id
+    JOIN journal_entries j ON us.user_id = j.user_id
     -- We assume the latest journal entry correlates with the score for simplicity in this MVP
     -- In a real scenario, we'd match by date proximity. 
     -- Here we take a simplified approach: aggregation or direct join if 1:1.
     -- Better approach for this MVP: Cross join on user_id where dates are close? 
     -- Let's stick to a simpler join: users who have BOTH a score and a journal.
-    GROUP BY s.user_id 
+    GROUP BY us.user_id 
     """
     # Note: The above query is a bit simplistic. It groups by user_id but doesn't aggregate.
     # SQLite will pick an arbitrary row. For an MVP to prove the concept, this is "okay",
@@ -50,13 +51,14 @@ def fetch_data(conn):
     
     query = """
     SELECT 
-        s.user_id,
+        us.user_id,
         s.total_score,
         s.age,
         AVG(j.sentiment_score) as avg_sentiment
     FROM scores s
-    INNER JOIN journal_entries j ON s.user_id = j.user_id
-    GROUP BY s.user_id, s.total_score, s.age
+    INNER JOIN user_sessions us ON s.session_id = us.session_id
+    INNER JOIN journal_entries j ON us.user_id = j.user_id
+    GROUP BY us.user_id, s.total_score, s.age
     """
     
     df = pd.read_sql_query(query, conn)

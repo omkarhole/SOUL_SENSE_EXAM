@@ -3,6 +3,7 @@
 import React from 'react';
 import { usePathname } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { useMounted } from '@/hooks/useMounted';
 
 // Use dynamic import with ssr: false to prevent hydration mismatch
 // on the floating navbar which depends on complex client-side state
@@ -19,8 +20,10 @@ const FloatingNavbar = dynamic(
 export function NavbarController() {
   const pathname = usePathname();
 
+  const isMounted = useMounted();
+
   const hideOnRoutes = new Set(['/forgot-password']);
-  if (hideOnRoutes.has(pathname)) {
+  if (!isMounted || hideOnRoutes.has(pathname)) {
     return null;
   }
 

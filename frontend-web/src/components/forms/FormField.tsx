@@ -46,6 +46,7 @@ export function FormField<T extends FieldValues>({
 
   const fieldProps = {
     ...field,
+    value: type === 'checkbox' || type === 'radio' ? field.value : (field.value ?? ''),
     ...props,
     placeholder,
     type,

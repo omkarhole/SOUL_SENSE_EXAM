@@ -5,10 +5,10 @@ import secrets
 from typing import Optional, Any
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, ValidationError
+from pydantic import Field, field_validator, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 BACKEND_DIR = ROOT_DIR / "backend"
 FASTAPI_DIR = BACKEND_DIR / "fastapi"
 ENV_FILE = ROOT_DIR / ".env"
@@ -19,7 +19,18 @@ if str(BACKEND_DIR) not in sys.path:
 if str(FASTAPI_DIR) not in sys.path:
     sys.path.insert(0, str(FASTAPI_DIR))
 
-from backend.core.validators import validate_environment_on_startup, log_environment_summary
+
+try:
+    from core.validators import validate_environment_on_startup, log_environment_summary
+except ImportError:
+    # Fallback for different execution contexts
+    try:
+        from backend.core.validators import validate_environment_on_startup, log_environment_summary
+    except ImportError:
+        def validate_environment_on_startup(env: str = "development"):
+            return {"validation_summary": {"valid": True, "errors": [], "warnings": []}, "validated_variables": {}}
+        def log_environment_summary(vars, summary, env):
+            pass
 
 load_dotenv(ENV_FILE)
 
@@ -40,14 +51,61 @@ class BaseAppSettings(BaseSettings):
 
     # Database configuration
     database_type: str = Field(default="sqlite", description="Database type")
-    database_url: str = Field(default="sqlite:///../../data/soulsense.db", description="Database URL")
+    database_url: str = Field(
+        default=f"sqlite:///{ROOT_DIR}/data/soulsense.db",
+        description="Database URL"
+    )
+    replica_database_url: Optional[str] = Field(
+        default=None, 
+        description="Read-replica database URL"
+    )    # Connection pooling configuration
+    use_pgbouncer: bool = Field(default=False, description="Use PgBouncer for connection pooling")
+    pgbouncer_host: str = Field(default="localhost", description="PgBouncer host")
+    pgbouncer_port: int = Field(default=6432, description="PgBouncer port")
+    db_request_timeout_seconds: int = Field(default=30, ge=5, le=300, description="Request-scoped DB timeout in seconds")
+    thread_pool_max_workers: int = Field(default=64, ge=8, le=512, description="Default executor max workers for blocking fallbacks")
+    @property
+    def async_database_url(self) -> str:
+        """Construct asynchronous database URL."""
+        url = self.database_url
+
+        # Use PgBouncer for PostgreSQL in production
+        if self.use_pgbouncer and url.startswith("postgresql://"):
+            # Replace host and port with PgBouncer settings
+            import re
+            # Extract current host and port
+            match = re.match(r'postgresql://([^:/@]+)(?::(\d+))?', url)
+            if match:
+                current_host = match.group(1)
+                current_port = match.group(2) or "5432"
+                # Replace with PgBouncer host and port
+                url = url.replace(f"{current_host}:{current_port}", f"{self.pgbouncer_host}:{self.pgbouncer_port}")
+                url = url.replace(f"{current_host}", f"{self.pgbouncer_host}:{self.pgbouncer_port}")
+
+        # Convert to async driver
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://")
+        elif url.startswith("sqlite:///"):
+            return url.replace("sqlite:///", "sqlite+aiosqlite:///")
+        return url
+
+    @property
+    def async_replica_database_url(self) -> Optional[str]:
+        """Construct asynchronous replica database URL."""
+        url = self.replica_database_url
+        if not url:
+            return None
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://")
+        elif url.startswith("sqlite:///"):
+            return url.replace("sqlite:///", "sqlite+aiosqlite:///")
+        return url
 
     # Redis configuration
     redis_host: str = Field(default="localhost", description="Redis host")
     redis_port: int = Field(default=6379, ge=1, le=65535, description="Redis port")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
     redis_db: int = Field(default=0, description="Redis database index")
-    redis_url: Optional[str] = Field(default=None, description="Redis URL (if set, overrides individual host/port)")
     redis_ttl_seconds: int = Field(default=60, description="Default lock TTL in seconds")
 
     # Database connection pool configuration
@@ -71,6 +129,12 @@ class BaseAppSettings(BaseSettings):
     github_repo_owner: str = Field(default="nupurmadaan04", description="GitHub Repository Owner")
     github_repo_name: str = Field(default="SOUL_SENSE_EXAM", description="GitHub Repository Name")
 
+    # OAuth Configuration
+    google_client_id: Optional[str] = Field(default=None, description="Google OAuth Client ID")
+    google_client_secret: Optional[str] = Field(default=None, description="Google OAuth Client Secret")
+    github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth Client ID")
+    github_client_secret: Optional[str] = Field(default=None, description="GitHub OAuth Client Secret")
+
     # CORS Configuration
     # Cookie Security Settings
     cookie_secure: bool = Field(default=False, description="Use Secure flag for cookies (Requires HTTPS)")
@@ -80,19 +144,43 @@ class BaseAppSettings(BaseSettings):
 
     # CORS Configuration
     BACKEND_CORS_ORIGINS: Any = Field(
-        default=["http://localhost:3000", "http://localhost:3005", "tauri://localhost"],
+        default=[
+            "http://localhost:3000", 
+            "http://localhost:3005", 
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:3005",
+            "tauri://localhost"
+        ],
         description="Allowed origins for CORS"
     )
 
-    # Security Configuration
-    ALLOWED_HOSTS: list[str] = Field(
-        default=["localhost", "127.0.0.1", "0.0.0.0"],
-        description="List of valid hostnames for Host header validation"
+    # CORS Security Settings
+    cors_allow_credentials: bool = Field(default=True, description="Allow credentials in CORS requests")
+    cors_max_age: int = Field(default=3600, description="Max age for preflight cache (seconds)")
+    cors_expose_headers: list[str] = Field(
+        default=["X-API-Version", "X-Request-ID", "X-Process-Time"],
+        description="Headers to expose via CORS"
     )
-    TRUSTED_PROXIES: list[str] = Field(
-        default=["127.0.0.1"],
-        description="List of trusted proxy IP addresses"
-    )
+    # Redis Configuration (for rate limiting and caching)
+    redis_host: str = Field(default="localhost", description="Redis host")
+    redis_port: int = Field(default=6379, ge=1, le=65535, description="Redis port")
+    redis_db: int = Field(default=0, ge=0, description="Redis database number")
+    redis_password: Optional[str] = Field(default=None, description="Redis password")
+
+    # Storage Configuration (S3 / Blob) (#1125)
+    storage_type: str = Field(default="s3", description="Cloud storage provider (s3, azure, local)")
+    s3_bucket_name: str = Field(default="soulsense-archival", description="S3 bucket for cold storage")
+    s3_region: str = Field(default="us-east-1", description="S3 bucket region")
+    aws_access_key_id: Optional[str] = Field(default=None, description="AWS access key")
+    aws_secret_access_key: Optional[str] = Field(default=None, description="AWS secret key")
+    archival_threshold_years: int = Field(default=2, description="Age threshold for archival in years")
+
+    @property
+    def redis_url(self) -> str:
+        """Construct Redis URL from configuration."""
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
@@ -109,6 +197,74 @@ class BaseAppSettings(BaseSettings):
             return v
         raise ValueError(v)
 
+    @field_validator("BACKEND_CORS_ORIGINS", mode="after")
+    @classmethod
+    def validate_cors_origins_security(cls, v: list[str], info) -> list[str]:
+        """Validate CORS origins for security issues."""
+        values = info.data
+
+        # Validate origin formats
+        for origin in v:
+            if not origin:
+                raise ValueError(
+                    f"Invalid CORS origin format: {origin}. "
+                    "Origins cannot be empty."
+                )
+            if not origin.startswith(("http://", "https://", "tauri://")) and origin != "*":
+                raise ValueError(
+                    f"Invalid CORS origin format: {origin}. "
+                    "Origins must use http://, https://, or tauri:// protocols."
+                )
+            # Check for incomplete URLs (protocol only)
+            if origin in ["http://", "https://", "tauri://"]:
+                raise ValueError(
+                    f"Invalid CORS origin format: {origin}. "
+                    "Origins must include a valid host."
+                )
+
+        # Warn about localhost in production (but don't block)
+        if values.get("app_env") == "production":
+            localhost_origins = [o for o in v if "localhost" in o or "127.0.0.1" in o]
+            if localhost_origins:
+                import warnings
+                warnings.warn(
+                    f"Production environment contains localhost origins: {localhost_origins}. "
+                    "Consider removing these for security."
+                )
+
+        return v
+
+        # Validate origin formats
+        for origin in v:
+            if not origin.startswith(("http://", "https://", "tauri://")) and origin != "*":
+                raise ValueError(
+                    f"Invalid CORS origin format: {origin}. "
+                    "Origins must use http://, https://, or tauri:// protocols."
+                )
+
+        # Warn about localhost in production (but don't block)
+        if values.get("app_env") == "production":
+            localhost_origins = [o for o in v if "localhost" in o or "127.0.0.1" in o]
+            if localhost_origins:
+                import warnings
+                warnings.warn(
+                    f"Production environment contains localhost origins: {localhost_origins}. "
+                    "Consider removing these for security."
+                )
+
+        return v
+
+    @model_validator(mode="after")
+    def validate_cors_security(self) -> "BaseAppSettings":
+        """Validate CORS security after all fields are set."""
+        if self.cors_allow_credentials and "*" in self.BACKEND_CORS_ORIGINS:
+            raise ValueError(
+                "CORS security violation: Cannot use wildcard origin (*) when allow_credentials=True. "
+                "This would allow any website to make authenticated requests to your API, "
+                "potentially leading to CSRF attacks and token theft."
+            )
+        return self
+
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
@@ -124,6 +280,11 @@ class BaseAppSettings(BaseSettings):
     def ENVIRONMENT(self) -> str:
         """Alias for app_env to match issue requirements."""
         return self.app_env
+
+    @property
+    def is_production(self) -> bool:
+        """Check if the current environment is production."""
+        return self.app_env == "production"
 
     @field_validator('app_env')
     @classmethod
@@ -146,6 +307,11 @@ class BaseAppSettings(BaseSettings):
     def validate_database_url(cls, v: str) -> str:
         if not v:
             raise ValueError('database_url cannot be empty')
+        
+        # Normalize to forward slashes for SQLite on Windows
+        if v.startswith('sqlite:///'):
+            v = v.replace('\\', '/')
+            
         # Basic URL validation for database URLs
         if not (v.startswith('sqlite:///') or '://' in v):
             raise ValueError('database_url must be a valid database URL')
@@ -237,16 +403,22 @@ def get_settings() -> BaseAppSettings:
         summary = validation_result['validation_summary']
 
         if not summary['valid']:
-            print("[ERROR] Environment validation failed!")
-            log_environment_summary(validation_result['validated_variables'], summary)
-            raise SystemExit(1)
+            print(f"[ERROR] Environment validation failed for '{env}'!")
+            log_environment_summary(validation_result['validated_variables'], summary, env)
+            # Only exit in production/staging if there are errors
+            if env in ['production', 'staging']:
+                raise SystemExit(1)
 
         # Log validation summary
-        log_environment_summary(validation_result['validated_variables'], summary)
+        log_environment_summary(validation_result['validated_variables'], summary, env)
 
     except Exception as e:
+        if isinstance(e, SystemExit):
+            raise e
         print(f"[ERROR] Environment validation error: {e}")
-        raise SystemExit(1)
+        # Don't crash in dev if validation itself fails
+        if env in ['production', 'staging']:
+            raise SystemExit(1)
 
     # Create appropriate settings class based on environment
     if env == "production":

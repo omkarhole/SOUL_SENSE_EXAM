@@ -1,0 +1,81 @@
+name: Analytics Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'shared/analytics/**'
+      - 'frontend-web/src/lib/utils/analytics.ts'
+      - 'mobile-app/**/AnalyticsEvents.*'
+      - 'mobile-app/**/AnalyticsManager.*'
+      - 'scripts/validate_analytics.js'
+      - 'docs/ANALYTICS_QA_CHECKLIST.md'
+  pull_request:
+    paths:
+      - 'shared/analytics/**'
+      - 'frontend-web/src/lib/utils/analytics.ts'
+      - 'mobile-app/**/AnalyticsEvents.*'
+      - 'mobile-app/**/AnalyticsManager.*'
+      - 'scripts/validate_analytics.js'
+      - 'docs/ANALYTICS_QA_CHECKLIST.md'
+
+jobs:
+  validate-analytics:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Validate Analytics Events
+      run: node scripts/validate_analytics.js
+
+    - name: Validate Event Schema
+      run: |
+        if ! jq . shared/analytics/event_schema.json > /dev/null 2>&1; then
+          echo "❌ Invalid JSON in event schema"
+          exit 1
+        fi
+        echo "✅ Event schema is valid JSON"
+
+    - name: Run Analytics QA Framework
+      run: |
+        echo "🔍 Running comprehensive analytics QA validation..."
+        node scripts/validate_analytics.js --qa-mode
+
+    - name: Check for Duplicate Events
+      run: |
+        echo "🔍 Checking for duplicate events across platforms..."
+        node scripts/validate_analytics.js --check-duplicates
+
+    - name: Validate Environment Separation
+      run: |
+        echo "🌐 Validating environment separation..."
+        node scripts/validate_analytics.js --check-environments
+
+    - name: Generate QA Checklist
+      run: |
+        echo "📋 Generating analytics QA checklist..."
+        node scripts/validate_analytics.js --generate-checklist > docs/ANALYTICS_QA_CHECKLIST.md
+
+    - name: Validate Top 20 Events
+      run: |
+        echo "📊 Validating top 20 events implementation..."
+        node scripts/validate_analytics.js --validate-top-events
+
+    - name: Upload QA Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: analytics-qa-results
+        path: |
+          docs/ANALYTICS_QA_CHECKLIST.md
+          scripts/validation_results.json
+        retention-days: 30
+

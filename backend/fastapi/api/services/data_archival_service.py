@@ -1,0 +1,234 @@
+import os
+import io
+import json
+import logging
+import uuid
+from datetime import datetime, timedelta, UTC
+from typing import Dict, Any, Tuple
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
+
+try:
+    import pyzipper
+except ImportError:
+    pyzipper = None
+
+from .export_service_v2 import ExportServiceV2
+from ..models import (
+    User, ExportRecord, Score, JournalEntry, UserSettings,
+    PersonalProfile, MedicalProfile, UserStrengths,
+    UserEmotionalPatterns, SatisfactionRecord,
+    AssessmentResult, Response, UserSession
+)
+from ..utils.file_validation import sanitize_filename
+from .scrubber_service import scrubber_service
+
+logger = logging.getLogger("api.archival")
+
+class DataArchivalService:
+    """
+    Handles GDPR-compliant comprehensive data portability and secure archival.
+    Creates password-protected ZIP archives containing PDF, CSV, and JSON representations.
+    Manages the Secure Purge (Soft Delete with 30-day Undo -> Hard Delete) lifecycle.
+    """
+
+    @staticmethod
+    async def generate_comprehensive_archive(
+        db: AsyncSession, 
+        user: User, 
+        password: str,
+        include_pdf: bool = True,
+        include_csv: bool = True,
+        include_json: bool = True
+    ) -> Tuple[str, str]:
+        """
+        Generates a comprehensive export (JSON, CSV, PDF) and bundles them into a password-protected ZIP.
+        Returns the (filepath, export_id).
+        """
+        if pyzipper is None:
+            raise RuntimeError("pyzipper is required for password-protected archives. Install it via pip.")
+
+        export_id = uuid.uuid4().hex
+        timestamp = datetime.now(UTC)
+        
+        # 1. Fetch comprehensive user data
+        options = {"data_types": list(ExportServiceV2.DATA_TYPES)}
+        data = await ExportServiceV2._fetch_export_data(db, user, options)
+        metadata = ExportServiceV2._build_metadata(user, export_id, "zip_archive", options, timestamp)
+        data['_export_metadata'] = metadata
+
+        # 2. Setup file paths
+        ext = "zip"
+        filepath = ExportServiceV2._get_safe_filepath(user.username, ext)
+
+        # 3. Create the password-protected ZIP using pyzipper
+        zip_buffer = io.BytesIO()
+        with pyzipper.AESZipFile(
+            zip_buffer, 
+            'w', 
+            compression=pyzipper.ZIP_DEFLATED, 
+            encryption=pyzipper.WZ_AES
+        ) as zf:
+            zf.setpassword(password.encode('utf-8'))
+
+            # --- Add JSON ---
+            if include_json:
+                json_str = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+                zf.writestr(f"{user.username}_data.json", json_str.encode('utf-8'))
+
+            # --- Add PDF ---
+            if include_pdf:
+                # We need to temporarily write PDF to disk or buffer
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                    tmp_pdf_path = tmp_pdf.name
+                
+                try:
+                    # _write_pdf is synchronous/CPU-bound; run in executor to avoid blocking
+                    import asyncio as _asyncio
+
+                    def _read_bytes(path: str) -> bytes:
+                        with open(path, 'rb') as pf:
+                            return pf.read()
+
+                    _loop = _asyncio.get_running_loop()
+                    await _loop.run_in_executor(None, ExportServiceV2._write_pdf, tmp_pdf_path, data, user)
+                    pdf_bytes = await _loop.run_in_executor(None, _read_bytes, tmp_pdf_path)
+                    zf.writestr(f"{user.username}_report.pdf", pdf_bytes)
+                except Exception as e:
+                    logger.error(f"Failed to include PDF in archive: {e}")
+                finally:
+                    try:
+                        if os.path.exists(tmp_pdf_path):
+                            os.remove(tmp_pdf_path)
+                    except Exception:
+                        logger.exception("Failed to remove temporary PDF file")
+
+            # --- Add CSV Bundle ---
+            if include_csv:
+                from .export_service_v2 import csv
+                def _add_csv(filename: str, rows: list):
+                    if not rows: return
+                    buffer = io.StringIO()
+                    fieldnames = set()
+                    for row in rows: fieldnames.update(row.keys())
+                    writer = csv.DictWriter(buffer, fieldnames=sorted(list(fieldnames)))
+                    writer.writeheader()
+                    for row in rows:
+                        safe = {k: ExportServiceV2._sanitize_csv_field(v) for k, v in row.items()}
+                        writer.writerow(safe)
+                    zf.writestr(f"csv_data/{filename}", buffer.getvalue().encode('utf-8-sig'))
+
+                for key, value in data.items():
+                    if key == '_export_metadata': continue
+                    if isinstance(value, list):
+                        _add_csv(f'{key}.csv', value)
+                    elif isinstance(value, dict):
+                        _add_csv(f'{key}.csv', [value])
+
+        # Write to disk without blocking the event loop
+        import asyncio as _asyncio
+
+        def _write_bytes(path: str, data: bytes):
+            with open(path, 'wb') as f:
+                f.write(data)
+
+        _loop = _asyncio.get_running_loop()
+        await _loop.run_in_executor(None, _write_bytes, filepath, zip_buffer.getvalue())
+
+        # 4. Record Export in DB
+        record = ExportRecord(
+            export_id=export_id,
+            user_id=user.id,
+            file_path=filepath,
+            format="zip_archive",
+            status="completed",
+            created_at=timestamp,
+            expires_at=timestamp + timedelta(days=7), # Archive available for 7 days
+            is_encrypted=True
+        )
+        db.add(record)
+        await db.commit()
+
+        return filepath, export_id
+
+    @staticmethod
+    async def initiate_secure_purge(db: AsyncSession, user: User) -> datetime:
+        """
+        Initiates a secure purge (Soft Delete). Sets the timer for 30 days.
+        """
+        if user.is_deleted:
+            raise ValueError("Account is already scheduled for deletion.")
+            
+        now = datetime.now(UTC)
+        user.is_deleted = True
+        user.deleted_at = now
+        # We could also invalidate all sessions / refresh tokens here
+        # to forcefully log them out of all devices.
+        
+        await db.commit()
+        return now
+
+    @staticmethod
+    async def undo_secure_purge(db: AsyncSession, user: User) -> None:
+        """
+        Reverts the Secure Purge if within the 30-day window.
+        """
+        if not user.is_deleted:
+            raise ValueError("Account is not scheduled for deletion.")
+            
+        user.is_deleted = False
+        user.deleted_at = None
+        
+        await db.commit()
+
+    @staticmethod
+    async def execute_hard_purges(db: AsyncSession) -> int:
+        """
+        Idempotent worker factor:
+        1. Find new users past the 30-day grace period and start their saga.
+        2. Find and resume any 'PENDING', 'ASSETS_DELETED', or 'FAILED' sagas.
+        """
+        # --- PHASE 1: Start new sagas for expired users ---
+        threshold_date = datetime.now(UTC) - timedelta(days=30)
+        stmt = select(User.id).where(
+            User.is_deleted == True,
+            User.deleted_at <= threshold_date
+        )
+        result = await db.execute(stmt)
+        user_ids = result.scalars().all()
+        
+        # --- PHASE 2: Re-fetch user_ids from incomplete sagas to ensure progress ---
+        saga_stmt = select(GDPRScrubLog.user_id).where(
+            GDPRScrubLog.status.in_(['PENDING', 'ASSETS_DELETED', 'FAILED'])
+        )
+        saga_res = await db.execute(saga_stmt)
+        pending_ids = saga_res.scalars().all()
+        
+        # Combine and deduplicate
+        all_ids_to_process = list(set(user_ids) | set(pending_ids))
+        
+        count = 0
+        for user_id in all_ids_to_process:
+            try:
+                # scrub_user is now idempotent and saga-based
+                await scrubber_service.scrub_user(db, user_id)
+                
+                # Check if it actually completed to count it
+                status = await scrubber_service.get_scrub_status_by_user(db, user_id)
+                if status == 'COMPLETED':
+                    count += 1
+                    logger.info(f"GDPR: Hard purge completed for user {user_id}")
+            except Exception as e:
+                logger.error(f"GDPR: Saga execution failed for user {user_id}: {e}")
+                continue
+            
+        return count
+
+    @staticmethod
+    async def get_scrub_status_by_user(db: AsyncSession, user_id: int) -> Optional[str]:
+        """Helper to get status by user_id."""
+        from ..models import GDPRScrubLog
+        stmt = select(GDPRScrubLog.status).where(GDPRScrubLog.user_id == user_id).order_by(GDPRScrubLog.updated_at.desc())
+        res = await db.execute(stmt)
+        return res.scalar_one_or_none()

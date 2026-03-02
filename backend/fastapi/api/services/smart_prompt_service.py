@@ -9,17 +9,29 @@ Provides AI-personalized journal prompts based on:
 """
 
 import json
+import logging
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from cachetools import TTLCache
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, desc
+from fastapi import Depends
 
-from ..models import Score, JournalEntry, UserEmotionalPatterns
-
+from ..models import Score, JournalEntry, UserEmotionalPatterns, UserSession
 
 # ============================================================================
-# Extended Prompt Database (50+ prompts organized by emotional context)
+# Smart Prompt Service Configuration (#1177)
+# ============================================================================
+
+logger = logging.getLogger("api.services.smart_prompt_service")
+
+# L1 Memory Cache: Keep 1000 items for 10 minutes
+L1_CACHE = TTLCache(maxsize=1000, ttl=600)
+PREWARM_TTL_SECONDS = 3600 * 4 # 4 Hours Cache for pre-warmed prompts
+
+# ============================================================================
+# Extended Prompt Database
 # ============================================================================
 
 SMART_PROMPTS = {
@@ -105,30 +117,14 @@ SMART_PROMPTS = {
     ],
 }
 
-
-# ============================================================================
-# Smart Prompt Service Class
-# ============================================================================
-
 class SmartPromptService:
     """Service for generating AI-personalized journal prompts."""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
     
-    def get_user_context(self, user_id: int) -> Dict[str, Any]:
-        """
-        Gather user's emotional context from multiple data sources.
-        
-        Returns:
-            Dict containing:
-            - latest_eq_score: Most recent EQ assessment score
-            - avg_sentiment_7d: Average journal sentiment over last 7 days
-            - sentiment_trend: "improving", "declining", or "stable"
-            - recent_stress_avg: Average stress level from recent journals
-            - detected_patterns: List of emotional patterns
-            - entry_count_7d: Number of journal entries in last 7 days
-        """
+    async def get_user_context(self, user_id: int) -> Dict[str, Any]:
+        """Gather user's emotional context from multiple data sources."""
         context = {
             "latest_eq_score": None,
             "avg_sentiment_7d": 50.0,
@@ -140,21 +136,25 @@ class SmartPromptService:
         }
         
         # 1. Get latest EQ score
-        latest_score = self.db.query(Score).filter(
-            Score.user_id == user_id
-        ).order_by(desc(Score.timestamp)).first()
+        score_stmt = select(Score).join(UserSession, Score.session_id == UserSession.session_id).filter(
+            UserSession.user_id == user_id
+        ).order_by(desc(Score.timestamp))
+        score_res = await self.db.execute(score_stmt)
+        latest_score = score_res.scalar_one_or_none()
         
         if latest_score:
             context["latest_eq_score"] = latest_score.total_score
         
         # 2. Get journal sentiment trends (last 7 days)
-        week_ago = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        week_ago = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
         
-        recent_entries = self.db.query(JournalEntry).filter(
+        entries_stmt = select(JournalEntry).filter(
             JournalEntry.user_id == user_id,
             JournalEntry.entry_date >= week_ago,
             JournalEntry.is_deleted == False
-        ).order_by(desc(JournalEntry.entry_date)).all()
+        ).order_by(desc(JournalEntry.entry_date))
+        entries_res = await self.db.execute(entries_stmt)
+        recent_entries = list(entries_res.scalars().all())
         
         context["entry_count_7d"] = len(recent_entries)
         
@@ -162,7 +162,6 @@ class SmartPromptService:
             sentiments = [e.sentiment_score or 50.0 for e in recent_entries]
             context["avg_sentiment_7d"] = sum(sentiments) / len(sentiments)
             
-            # Calculate trend (first half vs second half)
             if len(sentiments) >= 4:
                 mid = len(sentiments) // 2
                 older_avg = sum(sentiments[mid:]) / len(sentiments[mid:])
@@ -173,26 +172,25 @@ class SmartPromptService:
                 elif recent_avg < older_avg - 5:
                     context["sentiment_trend"] = "declining"
             
-            # Get stress levels
             stress_levels = [e.stress_level for e in recent_entries if e.stress_level]
             if stress_levels:
                 context["recent_stress_avg"] = sum(stress_levels) / len(stress_levels)
             
-            # Extract detected patterns from recent entries
             for entry in recent_entries[:5]:
                 if entry.emotional_patterns:
                     try:
                         patterns = json.loads(entry.emotional_patterns)
                         context["detected_patterns"].extend(patterns)
                     except (json.JSONDecodeError, TypeError):
-                        # Handle non-JSON patterns (legacy format)
                         if entry.emotional_patterns:
                             context["detected_patterns"].append(entry.emotional_patterns)
         
-        # 3. Get user's stored emotional patterns if available
-        user_patterns = self.db.query(UserEmotionalPatterns).filter(
+        # 3. Get user's stored emotional patterns
+        patterns_stmt = select(UserEmotionalPatterns).filter(
             UserEmotionalPatterns.user_id == user_id
-        ).first()
+        )
+        patterns_res = await self.db.execute(patterns_stmt)
+        user_patterns = patterns_res.scalar_one_or_none()
         
         if user_patterns and user_patterns.common_emotions:
             try:
@@ -201,14 +199,12 @@ class SmartPromptService:
             except (json.JSONDecodeError, TypeError):
                 pass
         
-        # Deduplicate patterns
         context["detected_patterns"] = list(set(context["detected_patterns"]))
         
         return context
     
     def _get_time_category(self) -> str:
-        """Determine time category for context-aware prompts."""
-        hour = datetime.now().hour
+        hour = datetime.now(UTC).hour
         if 5 <= hour < 12:
             return "morning"
         elif 12 <= hour < 17:
@@ -219,20 +215,13 @@ class SmartPromptService:
             return "night"
     
     def _determine_prompt_categories(self, context: Dict[str, Any]) -> List[str]:
-        """
-        Determine which prompt categories are most relevant based on user context.
-        
-        Returns prioritized list of categories.
-        """
         categories = []
         patterns = [p.lower() for p in context.get("detected_patterns", [])]
         
-        # Check stress levels
         stress_avg = context.get("recent_stress_avg")
         if stress_avg and stress_avg >= 7:
             categories.append("stress")
         
-        # Check sentiment
         avg_sentiment = context.get("avg_sentiment_7d", 50)
         if avg_sentiment < 35:
             categories.append("sadness")
@@ -240,7 +229,6 @@ class SmartPromptService:
             categories.append("positivity")
             categories.append("gratitude")
         
-        # Check detected patterns
         if any(p in patterns for p in ["anxiety", "worried", "nervous", "anxious"]):
             categories.append("anxiety")
         if any(p in patterns for p in ["fatigue", "tired", "exhausted", "low_energy"]):
@@ -248,102 +236,104 @@ class SmartPromptService:
         if any(p in patterns for p in ["hope", "hopeful", "optimistic"]):
             categories.append("positivity")
         
-        # Check EQ score
         eq_score = context.get("latest_eq_score")
         if eq_score and eq_score < 40:
             categories.append("reflection")
         
-        # Add general prompts if low engagement
         if context.get("entry_count_7d", 0) < 2:
             categories.append("general")
         
-        # Always include some positives
         if "gratitude" not in categories and "positivity" not in categories:
             categories.append("gratitude")
         
-        # Ensure we have categories
         if not categories:
             categories = ["general", "reflection", "gratitude"]
         
-        return list(dict.fromkeys(categories))  # Dedupe while preserving order
+        return list(dict.fromkeys(categories))
     
-    def get_smart_prompts(
+    async def get_smart_prompts(
         self, 
         user_id: int, 
-        count: int = 3
+        count: int = 3,
+        bypass_cache: bool = False
     ) -> Dict[str, Any]:
         """
-        Get personalized journal prompts for a user.
-        
-        Args:
-            user_id: The user's ID
-            count: Number of prompts to return (default 3)
-            
-        Returns:
-            Dict containing:
-            - prompts: List of prompt objects with context reasons
-            - user_mood: Detected mood category
-            - detected_patterns: List of patterns found
+        Get personalized journal prompts for a user with tiered caching (#1177).
+        L1 (Memory) -> L2 (Redis) -> Singleflight Call (DB/ML).
         """
-        context = self.get_user_context(user_id)
-        categories = self._determine_prompt_categories(context)
+        from .cache_service import cache_service
+        from ..utils.singleflight import singleflight_service
         
-        # Determine overall mood label
-        avg_sentiment = context.get("avg_sentiment_7d", 50)
-        if avg_sentiment >= 65:
-            mood = "positive"
-        elif avg_sentiment <= 35:
-            mood = "low"
-        else:
-            mood = "neutral"
+        cache_key = f"smart_prompts:{user_id}:{count}"
         
-        # Collect prompts from relevant categories
-        selected_prompts = []
-        used_ids = set()
-        
-        for category in categories:
-            if len(selected_prompts) >= count:
-                break
-                
-            category_prompts = SMART_PROMPTS.get(category, [])
-            available = [p for p in category_prompts if p["id"] not in used_ids]
+        if not bypass_cache:
+            # 1. Check L1 Memory Cache (Fastest)
+            l1_val = L1_CACHE.get(cache_key)
+            if l1_val:
+                logger.debug(f"[SmartPrompts] L1 Hit for user={user_id}")
+                return l1_val
             
-            if available:
-                prompt = random.choice(available)
-                used_ids.add(prompt["id"])
-                selected_prompts.append({
-                    "id": prompt["id"],
-                    "prompt": prompt["prompt"],
-                    "category": category,
-                    "context_reason": self._get_context_reason(category, context),
-                    "description": prompt.get("description", "")
-                })
+            # 2. Check L2 Redis Cache (Fastest)
+            l2_val = await cache_service.get(cache_key)
+            if l2_val:
+                logger.debug(f"[SmartPrompts] L2 Hit for user={user_id}")
+                # Backfill L1
+                L1_CACHE[cache_key] = l2_val
+                return l2_val
         
-        # Fill remaining slots from general if needed
-        while len(selected_prompts) < count:
-            general_prompts = SMART_PROMPTS.get("general", [])
-            available = [p for p in general_prompts if p["id"] not in used_ids]
-            if not available:
-                break
-            prompt = random.choice(available)
-            used_ids.add(prompt["id"])
-            selected_prompts.append({
-                "id": prompt["id"],
-                "prompt": prompt["prompt"],
-                "category": "general",
-                "context_reason": "A good prompt for self-reflection",
-                "description": prompt.get("description", "")
-            })
-        
-        return {
-            "prompts": selected_prompts,
-            "user_mood": mood,
-            "detected_patterns": context.get("detected_patterns", [])[:5],
-            "sentiment_avg": round(avg_sentiment, 1),
-        }
+        # 3. Cache Miss - use Singleflight to calculate
+        async def calculate():
+             logger.info(f"[SmartPrompts] Cache Miss/Bypass - Calculating for user={user_id}")
+             # This is the original logic moved here
+             context = await self.get_user_context(user_id)
+             categories = self._determine_prompt_categories(context)
+             
+             avg_sentiment = context.get("avg_sentiment_7d", 50)
+             mood = "positive" if avg_sentiment >= 65 else ("low" if avg_sentiment <= 35 else "neutral")
+             
+             selected_prompts, used_ids = [], set()
+             for category in categories:
+                 if len(selected_prompts) >= count: break
+                 available = [p for p in SMART_PROMPTS.get(category, []) if p["id"] not in used_ids]
+                 if available:
+                     p = random.choice(available)
+                     used_ids.add(p["id"])
+                     selected_prompts.append({
+                         "id": p["id"], "prompt": p["prompt"], "category": category,
+                         "context_reason": self._get_context_reason(category, context),
+                         "description": p.get("description", "")
+                     })
+             
+             while len(selected_prompts) < count:
+                 available = [p for p in SMART_PROMPTS.get("general", []) if p["id"] not in used_ids]
+                 if not available: break
+                 p = random.choice(available)
+                 used_ids.add(p["id"])
+                 selected_prompts.append({
+                     "id": p["id"], "prompt": p["prompt"], "category": "general",
+                     "context_reason": "A good prompt for self-reflection", "description": p.get("description", "")
+                 })
+             
+             res = {
+                 "prompts": selected_prompts, "user_mood": mood,
+                 "detected_patterns": context.get("detected_patterns", [])[:5],
+                 "sentiment_avg": round(avg_sentiment, 1),
+                 "generated_at": datetime.now(UTC).isoformat()
+             }
+             
+             # Populate Caches
+             L1_CACHE[cache_key] = res
+             await cache_service.set(cache_key, res, ttl_seconds=PREWARM_TTL_SECONDS)
+             return res
+
+        return await singleflight_service.execute(cache_key, calculate)
+
+    async def prewarm_for_user(self, user_id: int):
+        """Forces a generation and cache populate (Predictive Pre-warming #1177)."""
+        logger.info(f"[Pre-warm] Warming smart prompts for user={user_id}")
+        await self.get_smart_prompts(user_id, count=3, bypass_cache=True)
     
     def _get_context_reason(self, category: str, context: Dict[str, Any]) -> str:
-        """Generate a human-readable reason for why this category was selected."""
         stress_avg = context.get('recent_stress_avg')
         stress_display = f"{stress_avg:.1f}/10" if stress_avg is not None else "elevated"
         
@@ -362,6 +352,7 @@ class SmartPromptService:
         return reasons.get(category, "Selected to support your journaling practice")
 
 
-def get_smart_prompt_service(db: Session) -> SmartPromptService:
-    """Dependency injection helper for FastAPI."""
+async def get_smart_prompt_service(db: AsyncSession = Depends(None)) -> SmartPromptService:
+    """Dependency injection helper."""
+    # Note: Requires manual injection or correct FastAPI annotation
     return SmartPromptService(db)

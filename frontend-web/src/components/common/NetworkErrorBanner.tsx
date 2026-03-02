@@ -4,8 +4,10 @@ import React, { useEffect, useState } from 'react';
 
 import { WifiOff, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useMounted } from '@/hooks/useMounted';
 
 export const NetworkErrorBanner = () => {
+  const isMounted = useMounted();
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -22,6 +24,8 @@ export const NetworkErrorBanner = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  if (!isMounted) return null;
 
   return (
     <AnimatePresence>

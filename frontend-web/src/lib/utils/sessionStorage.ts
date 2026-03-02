@@ -4,6 +4,7 @@
 
 const SESSION_KEY = 'soul_sense_auth_session';
 const SESSION_EXPIRY_DAYS = 30;
+const LAST_ACTIVITY_KEY = 'soul_sense_last_activity';
 
 export interface UserSession {
   user: {
@@ -12,10 +13,16 @@ export interface UserSession {
     username?: string;
     name?: string;
     created_at?: string;
+    onboarding_completed?: boolean;
   };
   token: string;
   expiresAt: number;
 }
+
+/**
+ * Check if we're in a browser environment
+ */
+const isBrowser = (): boolean => typeof window !== 'undefined';
 
 /**
  * Lightweight JWT parser to check if a token is expired
@@ -48,6 +55,8 @@ export const isTokenExpired = (token: string): boolean => {
  * @param rememberMe Whether to use localStorage (persistent) or sessionStorage (per-tab)
  */
 export const saveSession = (session: UserSession, rememberMe: boolean): void => {
+  if (!isBrowser()) return;
+  
   const data = JSON.stringify(session);
   if (rememberMe) {
     localStorage.setItem(SESSION_KEY, data);
@@ -63,6 +72,8 @@ export const saveSession = (session: UserSession, rememberMe: boolean): void => 
  * Checks both localStorage and sessionStorage
  */
 export const getSession = (): UserSession | null => {
+  if (!isBrowser()) return null;
+  
   const localData = localStorage.getItem(SESSION_KEY);
   const sessionData = sessionStorage.getItem(SESSION_KEY);
 
@@ -90,6 +101,8 @@ export const getSession = (): UserSession | null => {
  * Clear session from both storage types
  */
 export const clearSession = (): void => {
+  if (!isBrowser()) return;
+  
   localStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem(SESSION_KEY);
 };
@@ -101,4 +114,72 @@ export const getExpiryTimestamp = (): number => {
   const now = new Date();
   now.setDate(now.getDate() + SESSION_EXPIRY_DAYS);
   return now.getTime();
+};
+
+/**
+ * Update the last activity timestamp
+ * Used for session timeout tracking (Issue #999)
+ */
+export const updateLastActivity = (): void => {
+  if (!isBrowser()) return;
+  
+  const now = Date.now();
+  localStorage.setItem(LAST_ACTIVITY_KEY, now.toString());
+  sessionStorage.setItem(LAST_ACTIVITY_KEY, now.toString());
+};
+
+/**
+ * Get the last activity timestamp
+ * Returns null if no activity recorded
+ */
+export const getLastActivity = (): number | null => {
+  if (!isBrowser()) return null;
+  
+  const localActivity = localStorage.getItem(LAST_ACTIVITY_KEY);
+  const sessionActivity = sessionStorage.getItem(LAST_ACTIVITY_KEY);
+  const activityStr = sessionActivity || localActivity;
+  
+  if (!activityStr) return null;
+  
+  const activity = parseInt(activityStr, 10);
+  return isNaN(activity) ? null : activity;
+};
+
+/**
+ * Check if session has timed out due to inactivity
+ * @param timeoutMs Timeout in milliseconds (default: 15 minutes)
+ * @returns true if session has timed out
+ */
+export const isSessionTimedOut = (timeoutMs: number = 15 * 60 * 1000): boolean => {
+  const lastActivity = getLastActivity();
+  if (!lastActivity) return true;
+  
+  const now = Date.now();
+  return now - lastActivity > timeoutMs;
+};
+
+/**
+ * Get remaining time before timeout
+ * @param timeoutMs Timeout in milliseconds (default: 15 minutes)
+ * @returns remaining time in milliseconds, or 0 if timed out
+ */
+export const getRemainingTime = (timeoutMs: number = 15 * 60 * 1000): number => {
+  const lastActivity = getLastActivity();
+  if (!lastActivity) return 0;
+  
+  const now = Date.now();
+  const elapsed = now - lastActivity;
+  const remaining = timeoutMs - elapsed;
+  
+  return Math.max(0, remaining);
+};
+
+/**
+ * Clear last activity tracking
+ */
+export const clearLastActivity = (): void => {
+  if (!isBrowser()) return;
+  
+  localStorage.removeItem(LAST_ACTIVITY_KEY);
+  sessionStorage.removeItem(LAST_ACTIVITY_KEY);
 };

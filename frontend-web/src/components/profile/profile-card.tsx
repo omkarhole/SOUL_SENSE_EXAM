@@ -1,8 +1,8 @@
 'use client';
 
 import { PersonalProfile } from '@/lib/api/profile';
-import { Avatar, AvatarFallback } from '@/components/ui';
-import { Mail, Calendar, User as UserIcon, Briefcase, GraduationCap, Edit2 } from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui';
+import { Mail, Calendar, User as UserIcon, Briefcase, GraduationCap, Edit2, Moon, Activity, Apple, Heart, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ProfileCardProps {
@@ -47,6 +47,13 @@ export function ProfileCard({
       <div className="flex flex-col sm:flex-row items-center gap-8 border-b border-border/40 pb-8">
         <div className="relative group">
           <Avatar className="h-28 w-28 border-4 border-background shadow-xl group-hover:shadow-2xl transition-all duration-300">
+            {profile?.avatar_path && (
+              <AvatarImage
+                src={`/api/v1/avatars/${profile.avatar_path}`}
+                alt={`${user?.username || 'User'} avatar`}
+                className="object-cover"
+              />
+            )}
             <AvatarFallback className="bg-gradient-to-br from-primary to-primary/60 text-white text-2xl font-black">
               {getInitials()}
             </AvatarFallback>
@@ -151,6 +158,127 @@ export function ProfileCard({
                     Education
                   </p>
                   <p className="font-semibold text-sm">{profile.education_level}</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.sleep_hours && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Moon className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Sleep Hours
+                  </p>
+                  <p className="font-semibold text-sm">{profile.sleep_hours} hours/night</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.exercise_freq && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Exercise Frequency
+                  </p>
+                  <p className="font-semibold text-sm capitalize">{profile.exercise_freq}</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.dietary_patterns && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Apple className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Diet Type
+                  </p>
+                  <p className="font-semibold text-sm">{profile.dietary_patterns}</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.has_therapist !== undefined && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Heart className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Therapist Access
+                  </p>
+                  <p className="font-semibold text-sm">{profile.has_therapist ? 'Yes' : 'No'}</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.support_network_size !== undefined && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <UserIcon className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Support Network
+                  </p>
+                  <p className="font-semibold text-sm">{profile.support_network_size} people</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.primary_support_type && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Briefcase className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Primary Support
+                  </p>
+                  <p className="font-semibold text-sm capitalize">{profile.primary_support_type}</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.primary_goal && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Target className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Primary Goal
+                  </p>
+                  <p className="font-semibold text-sm">{profile.primary_goal}</p>
+                </div>
+              </div>
+            )}
+
+            {profile?.focus_areas && profile.focus_areas.length > 0 && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40 group hover:border-primary/20 transition-colors">
+                <div className="p-2.5 rounded-xl bg-background border border-border/40 text-muted-foreground group-hover:text-primary transition-colors">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-muted-foreground/60 mb-0.5">
+                    Focus Areas
+                  </p>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {profile.focus_areas?.map((area: string, index: number) => (
+                      <span
+                        key={index}
+                        className="px-2 py-1 text-xs bg-primary/10 text-primary rounded-md"
+                      >
+                        {area}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}

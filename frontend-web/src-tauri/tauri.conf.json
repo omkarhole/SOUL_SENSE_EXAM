@@ -34,5 +34,23 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/soul-sense-backend"]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/your-repo/soul-sense/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "your-public-key-here"
+    },
+    "deep-link": {
+      "domains": [
+        {
+          "host": "soulsense",
+          "schemes": ["soulsense"]
+        }
+      ]
+    }
   }
 }

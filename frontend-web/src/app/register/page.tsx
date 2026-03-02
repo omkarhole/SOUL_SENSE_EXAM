@@ -729,7 +729,7 @@ export default function RegisterPage() {
           defaultValues={{
             firstName: '',
             lastName: '',
-            age: undefined,
+            age: 18,
             gender: undefined,
             username: '',
             email: '',

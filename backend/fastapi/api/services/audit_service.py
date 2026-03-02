@@ -2,9 +2,9 @@ import logging
 import json
 from datetime import datetime, timedelta, UTC
 from typing import Optional, List, Dict, Any
-from sqlalchemy.orm import Session
-from ..services.db_service import SessionLocal
-from ..models import AuditLog
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
+from ..models import AuditLog, User
 
 logger = logging.getLogger(__name__)
 
@@ -15,31 +15,21 @@ class AuditService:
 
     # Allowed fields in details JSON to prevent PII leakage
     ALLOWED_DETAIL_FIELDS = {
-        "status", "reason", "method", "device", "location", "changed_field", "old_value"
+        "status", "reason", "method", "device", "location", "changed_field", "old_value", "outcome"
     }
 
     @classmethod
-    def log_event(cls, user_id: int, action: str,
+    async def log_event(cls, user_id: int, action: str,
                  ip_address: Optional[str] = "SYSTEM",
                  user_agent: Optional[str] = None,
                  details: Optional[Dict[str, Any]] = None,
-                 db_session: Optional[Session] = None) -> bool:
+                 db_session: Optional[AsyncSession] = None) -> bool:
         """
         Log a security-critical event.
-
-        Args:
-            user_id: ID of the user performing the action
-            action: Action name (e.g., 'LOGIN', 'PASSWORD_CHANGE')
-            ip_address: IP address of the requester
-            user_agent: User agent string
-            details: Dictionary of additional context (will be filtered)
-            db_session: Optional shared session to use
-
-        Returns:
-            bool: True if logged successfully, False otherwise path
         """
-        session = db_session if db_session else SessionLocal()
-        should_close = db_session is None
+        if not db_session:
+            logger.error("AuditLog requires a db_session")
+            return False
 
         try:
             # 1. Sanitize Inputs
@@ -65,8 +55,8 @@ class AuditService:
                 timestamp=datetime.now(UTC)
             )
 
-            session.add(log_entry)
-            session.commit()
+            db_session.add(log_entry)
+            await db_session.commit()
 
             logger.info(f"AUDIT LOG: User {user_id} performed {action} from {ip_address}")
             return True
@@ -74,54 +64,74 @@ class AuditService:
         except Exception as e:
             # Fallback logging if DB fails
             logger.critical(f"AUDIT LOG FAILURE: User {user_id} performed {action}. Error: {e}")
-            session.rollback()
+            await db_session.rollback()
             return False
-        finally:
-            if should_close:
-                session.close()
+
+    @classmethod
+    async def log_auth_event(cls, action: str, username: str,
+                      ip_address: Optional[str] = "SYSTEM",
+                      user_agent: Optional[str] = None,
+                      details: Optional[Dict[str, Any]] = None,
+                      db_session: Optional[AsyncSession] = None) -> bool:
+        """
+        Log an auth event by username (finds user_id first).
+        """
+        if not db_session:
+             return False
+             
+        stmt = select(User.id).filter(User.username == username)
+        result = await db_session.execute(stmt)
+        user_id = result.scalar()
+        
+        if not user_id:
+            logger.warning(f"AuditLog: Could not find user_id for username {username}")
+            return False
+            
+        return await cls.log_event(
+            user_id=user_id,
+            action=action.upper(),
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details=details,
+            db_session=db_session
+        )
 
     @staticmethod
-    def get_user_logs(user_id: int, page: int = 1, per_page: int = 20, db_session: Optional[Session] = None) -> List[AuditLog]:
+    async def get_user_logs(user_id: int, page: int = 1, per_page: int = 20, db_session: Optional[AsyncSession] = None) -> List[AuditLog]:
         """
         Retrieve audit logs for a specific user with pagination.
         """
-        session = db_session if db_session else SessionLocal()
-        should_close = db_session is None
+        if not db_session:
+            return []
 
         try:
             offset = (page - 1) * per_page
-            logs = session.query(AuditLog).filter(
+            stmt = select(AuditLog).filter(
                 AuditLog.user_id == user_id
             ).order_by(
                 AuditLog.timestamp.desc()
-            ).limit(per_page).offset(offset).all()
-
-            return logs
+            ).limit(per_page).offset(offset)
+            
+            result = await db_session.execute(stmt)
+            return list(result.scalars().all())
         except Exception as e:
             logger.error(f"Failed to fetch audit logs for user {user_id}: {e}")
             return []
-        finally:
-            if should_close:
-                session.close()
 
     @staticmethod
-    def cleanup_old_logs(days: int = 90) -> int:
+    async def cleanup_old_logs(db_session: AsyncSession, days: int = 90) -> int:
         """
         Delete logs older than retention period.
-        Returns: Number of records deleted.
         """
-        session = SessionLocal()
         try:
             cutoff_date = datetime.now(UTC) - timedelta(days=days)
-            deleted_count = session.query(AuditLog).filter(
-                AuditLog.timestamp < cutoff_date
-            ).delete()
-            session.commit()
+            stmt = delete(AuditLog).filter(AuditLog.timestamp < cutoff_date)
+            result = await db_session.execute(stmt)
+            await db_session.commit()
+            deleted_count = result.rowcount
             logger.info(f"Cleaned up {deleted_count} old audit logs.")
             return deleted_count
         except Exception as e:
-            session.rollback()
+            await db_session.rollback()
             logger.error(f"Audit cleanup failed: {e}")
             return 0
-        finally:
-            session.close()

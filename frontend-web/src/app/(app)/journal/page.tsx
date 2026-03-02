@@ -7,7 +7,9 @@ import { journalApi, CreateJournalEntry, JournalFilters } from '@/lib/api/journa
 import { ErrorDisplay, Skeleton } from '@/components/common';
 import { Button, Card, CardContent, Input, Slider } from '@/components/ui';
 import { JournalEntryCard } from '@/components/journal';
-import { MoodTrend } from '@/components/journal';
+import { JournalListContainer } from '@/components/journal';
+// Dynamically import MoodTrend to avoid loading recharts on initial bundle
+import { MoodTrend } from '@/lib/dynamic-imports';
 import {
   BookOpen,
   Plus,
@@ -63,7 +65,7 @@ export default function JournalPage() {
     hasNextPage,
     refetch,
     loadMore,
-  } = useJournal(filters);
+  } = useJournal(filters, true);
 
   const setJournalFilters = (newFilters: JournalFilters) => {
     setFilters(newFilters);
@@ -392,19 +394,6 @@ export default function JournalPage() {
         </CardContent>
       </Card>
 
-      {/* Loading State */}
-      {loading && entries.length === 0 && (
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="rounded-2xl border p-6 space-y-3">
-              <Skeleton className="h-5 w-40" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Error State */}
       {error && <ErrorDisplay message={error} onRetry={refetch} />}
 
@@ -470,6 +459,26 @@ export default function JournalPage() {
             </motion.div>
           ))}
         </InfiniteScroll>
+      {/* Entries List */}
+      {!error && entries.length > 0 && (
+        <JournalListContainer
+          entries={entries}
+          onEntryClick={handleEntryClick}
+        />
+      )}
+
+      {/* Load More / Pagination */}
+      {hasNextPage && (
+        <div className="flex justify-center">
+          <Button
+            onClick={handleLoadMore}
+            disabled={loading}
+            variant="outline"
+            className="rounded-full px-8"
+          >
+            {loading ? 'Loading...' : 'Load More'}
+          </Button>
+        </div>
       )}
     </motion.div>
   );

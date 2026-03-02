@@ -5,7 +5,7 @@ import { UserSettings } from '../../lib/api/settings';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui';
 import { Checkbox } from '@/components/ui';
 import { Button } from '@/components/ui';
-import { useDebounce } from '@/hooks/useDebounce';
+import { useDebounceCallback } from '@/hooks/useDebounceCallback';
 import {
   AlertTriangle,
   Download,
@@ -30,7 +30,7 @@ interface PrivacySettingsProps {
 export function PrivacySettings({ settings, onChange }: PrivacySettingsProps) {
   const { toast } = useToast();
   const [isDownloading, setIsDownloading] = useState(false);
-  const debouncedOnChange = useDebounce(onChange, 500);
+  const debouncedOnChange = useDebounceCallback(onChange, 500);
 
   const handlePrivacyChange = (key: 'data_collection' | 'analytics', value: boolean) => {
     debouncedOnChange({
@@ -50,13 +50,53 @@ export function PrivacySettings({ settings, onChange }: PrivacySettingsProps) {
     });
   };
 
-  const handleVisibilityChange = (visibility: 'public' | 'private' | 'friends') => {
+  const handleConsentChange = (key: 'consent_ml_training' | 'consent_aggregated_research', value: boolean) => {
     debouncedOnChange({
       privacy: {
         ...settings.privacy,
-        profile_visibility: visibility,
+        [key]: value,
       },
     });
+  };
+
+  const handleVisibilityChange = (value: string) => {
+    debouncedOnChange({
+      privacy: {
+        ...settings.privacy,
+        profile_visibility: value as 'private' | 'friends' | 'public',
+      },
+    });
+  };
+
+  const handleCrisisModeChange = async (value: boolean) => {
+    try {
+      // Update immediately via API
+      await apiClient('/profiles/crisis_settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          crisis_mode_enabled: value,
+        }),
+      });
+
+      // Update local state
+      onChange({
+        privacy: {
+          ...settings.privacy,
+          crisis_mode_enabled: value,
+        },
+      });
+
+      toast({
+        type: 'success',
+        message: `Crisis support ${value ? 'enabled' : 'disabled'} successfully.`,
+      });
+    } catch (error) {
+      console.error('Failed to update crisis mode:', error);
+      toast({
+        type: 'error',
+        message: 'Failed to update crisis support setting.',
+      });
+    }
   };
 
   const handleExportData = async () => {
@@ -153,6 +193,84 @@ export function PrivacySettings({ settings, onChange }: PrivacySettingsProps) {
         </div>
       </div>
 
+      {/* Data Consent */}
+      <div className="space-y-6">
+        <div className="flex items-center gap-2 text-muted-foreground/60">
+          <Shield className="h-3.5 w-3.5" />
+          <h3 className="text-[10px] uppercase tracking-widest font-black">Data Consent</h3>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <div className="flex items-center justify-between p-5 bg-muted/10 border border-border/40 rounded-2xl group hover:border-border transition-all">
+            <div className="flex items-center gap-4">
+              <div className="p-2 rounded-xl bg-background border border-border/40 text-muted-foreground">
+                <Database className="h-5 w-5" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-bold">Allow Data for ML Training</p>
+                <p className="text-[10px] text-muted-foreground font-medium">
+                  Permit your journal entries to be used for training our core language models
+                </p>
+              </div>
+            </div>
+            <Checkbox
+              checked={settings.privacy.consent_ml_training}
+              onChange={(e) => handleConsentChange('consent_ml_training', e.target.checked)}
+              className="h-6 w-6 rounded-lg border-2 border-border/60"
+            />
+          </div>
+
+          <div className="flex items-center justify-between p-5 bg-muted/10 border border-border/40 rounded-2xl group hover:border-border transition-all">
+            <div className="flex items-center gap-4">
+              <div className="p-2 rounded-xl bg-background border border-border/40 text-muted-foreground">
+                <Eye className="h-5 w-5" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-bold">Allow Anonymous Research</p>
+                <p className="text-[10px] text-muted-foreground font-medium">
+                  Include your sanitized assessment scores in global platform dashboards
+                </p>
+              </div>
+            </div>
+            <Checkbox
+              checked={settings.privacy.consent_aggregated_research}
+              onChange={(e) => handleConsentChange('consent_aggregated_research', e.target.checked)}
+              className="h-6 w-6 rounded-lg border-2 border-border/60"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Wellbeing Controls */}
+      <div className="space-y-6">
+        <div className="flex items-center gap-2 text-muted-foreground/60">
+          <Shield className="h-3.5 w-3.5" />
+          <h3 className="text-[10px] uppercase tracking-widest font-black">Wellbeing Controls</h3>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <div className="flex items-center justify-between p-5 bg-red-50/10 border border-red-200/40 rounded-2xl group hover:border-red-300/60 transition-all">
+            <div className="flex items-center gap-4">
+              <div className="p-2 rounded-xl bg-red-50 border border-red-200/40 text-red-600">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-bold">Enable Crisis Support Interventions</p>
+                <p className="text-[10px] text-muted-foreground font-medium">
+                  Allow the system to detect and intervene during severe emotional distress.
+                  This enables specialized sentiment analysis and UI alerts when needed.
+                </p>
+              </div>
+            </div>
+            <Checkbox
+              checked={settings.privacy.crisis_mode_enabled}
+              onChange={(e) => handleCrisisModeChange(e.target.checked)}
+              className="h-6 w-6 rounded-lg border-2 border-red-300/60 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600"
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Data Retention */}
       <div className="space-y-3">
         <div>
@@ -214,11 +332,13 @@ export function PrivacySettings({ settings, onChange }: PrivacySettingsProps) {
             className="w-full sm:w-auto font-black uppercase tracking-widest text-[10px] h-9 rounded-full px-8 border-border/60 hover:bg-primary/5 hover:text-primary transition-colors"
           >
             {isDownloading ? (
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              <>
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                Generating...
+              </>
             ) : (
               'Initiate Transfer'
             )}
-            {isDownloading && 'Generating...'}
           </Button>
         </div>
       </div>

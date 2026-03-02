@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
 import { Skeleton } from '@/components/ui';
 import { Checkbox } from '@/components/ui';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui';
+import { toast } from '@/lib/toast';
 
 export default function SettingsTestPage() {
   const { settings, isLoading, error, updateSettings, syncSettings } = useSettings();
@@ -16,6 +17,7 @@ export default function SettingsTestPage() {
       await updateSettings({ theme });
     } catch (err) {
       console.error('Failed to update theme:', err);
+      toast.error('Failed to update theme. Please try again.');
     }
   };
 
@@ -33,6 +35,7 @@ export default function SettingsTestPage() {
       });
     } catch (err) {
       console.error('Failed to update notifications:', err);
+      toast.error('Failed to update notifications. Please try again.');
     }
   };
 
@@ -41,6 +44,7 @@ export default function SettingsTestPage() {
       await syncSettings();
     } catch (err) {
       console.error('Failed to sync settings:', err);
+      toast.error('Failed to sync settings. Please try again.');
     }
   };
 

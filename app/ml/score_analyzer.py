@@ -2,7 +2,7 @@
 
 import logging
 from typing import Dict, List, Optional
-from app.db import get_session
+from app.db import safe_db_context
 from app.models import Score, User
 from app.analysis.outlier_detection import OutlierDetector
 
@@ -28,8 +28,7 @@ class ScoreAnalyzer:
         Returns:
             Dict: Validation result with validity, warnings, and details.
         """
-        session = get_session()
-        try:
+        with safe_db_context() as session:
             # Get user's historical scores
             historical_scores = session.query(Score).filter(
                 Score.username == username
@@ -79,9 +78,6 @@ class ScoreAnalyzer:
                     "change_from_last": score_value - last_score
                 }
             }
-        
-        finally:
-            session.close()
     
     def get_score_analytics(self, username: str) -> Dict:
         """Get comprehensive score analytics with outlier analysis.
@@ -92,8 +88,7 @@ class ScoreAnalyzer:
         Returns:
             Dict: Analytics including score statistics, outliers, and quality assessment.
         """
-        session = get_session()
-        try:
+        with safe_db_context() as session:
             scores = session.query(Score).filter(
                 Score.username == username
             ).order_by(Score.timestamp).all()
@@ -133,9 +128,6 @@ class ScoreAnalyzer:
                     outlier_result, inconsistency, score_values
                 )
             }
-        
-        finally:
-            session.close()
     
     def get_cohort_analytics(self, age_group: str) -> Dict:
         """Get analytics for an age group cohort.
@@ -146,8 +138,7 @@ class ScoreAnalyzer:
         Returns:
             Dict: Cohort analytics including statistics and data quality.
         """
-        session = get_session()
-        try:
+        with safe_db_context() as session:
             scores = session.query(Score).filter(
                 Score.detailed_age_group == age_group
             ).all()
@@ -178,9 +169,6 @@ class ScoreAnalyzer:
                 },
                 "outlier_details": outlier_result.get("outlier_details", [])
             }
-        
-        finally:
-            session.close()
     
     def generate_quality_report(self) -> Dict:
         """Generate overall data quality report.
@@ -188,8 +176,7 @@ class ScoreAnalyzer:
         Returns:
             Dict: Comprehensive quality report for all data.
         """
-        session = get_session()
-        try:
+        with safe_db_context() as session:
             all_scores = session.query(Score).all()
             score_values = [s.total_score for s in all_scores]
             
@@ -214,9 +201,6 @@ class ScoreAnalyzer:
                     for ag in age_groups if ag[0]
                 ]
             }
-        
-        finally:
-            session.close()
     
     # Helper methods
     

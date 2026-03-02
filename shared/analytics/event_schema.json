@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Analytics Event Schema",
+  "description": "Master schema for all analytics events. Version controlled to prevent schema drift.",
+  "version": "1.0",
+  "type": "object",
+  "properties": {
+    "event_name": {
+      "type": "string",
+      "description": "Event name following snake_case convention",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "enum": [
+        "screen_view",
+        "login_screen_view",
+        "signup_screen_view",
+        "profile_screen_view",
+        "settings_screen_view",
+        "button_click",
+        "start_button_click",
+        "login_button_click",
+        "signup_button_click",
+        "logout_button_click",
+        "signup_start",
+        "signup_success",
+        "signup_failure",
+        "login_attempt",
+        "login_success",
+        "login_failure",
+        "payment_start",
+        "payment_success",
+        "payment_failure",
+        "journal_entry_created",
+        "assessment_started",
+        "assessment_completed",
+        "report_viewed",
+        "app_launch",
+        "app_background",
+        "app_foreground",
+        "app_crash",
+        "device_rotation",
+        "session_start",
+        "session_end",
+        "scroll_depth_25",
+        "scroll_depth_50",
+        "scroll_depth_75",
+        "scroll_depth_100",
+        "screen_enter",
+        "screen_exit",
+        "network_error",
+        "api_error",
+        "validation_error",
+        "validation_failed"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when event occurred"
+    },
+    "user_id": {
+      "type": ["string", "null"],
+      "description": "Anonymous user identifier (no PII)"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Session identifier"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["ios", "android", "web", "desktop"],
+      "description": "Platform where event occurred"
+    },
+    "app_version": {
+      "type": "string",
+      "description": "Application version"
+    },
+    "device_info": {
+      "type": "object",
+      "properties": {
+        "model": { "type": "string" },
+        "os_version": { "type": "string" },
+        "screen_resolution": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "event_properties": {
+      "type": "object",
+      "description": "Event-specific properties",
+      "oneOf": [
+        {
+          "properties": {
+            "screen_name": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "button_name": { "type": "string" },
+            "element_type": { "type": "string", "enum": ["button", "link", "menu_item"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "method": { "type": "string", "enum": ["email", "google", "apple", "facebook"] },
+            "referral_code": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "error_code": { "type": "string" },
+            "error_message": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "session_duration_ms": { "type": "number" },
+            "session_duration_seconds": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "scroll_percentage": { "type": "number", "enum": [25, 50, 75, 100] },
+            "page_url": { "type": "string" },
+            "screen_name": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "screen_name": { "type": "string" },
+            "enter_time": { "type": "string", "format": "date-time" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "screen_name": { "type": "string" },
+            "enter_time": { "type": "string", "format": "date-time" },
+            "exit_time": { "type": "string", "format": "date-time" },
+            "duration_ms": { "type": "number" },
+            "duration_seconds": { "type": "number" },
+            "exit_reason": { "type": "string", "enum": ["navigation", "background", "force_close", "app_close"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "endpoint": { "type": "string" },
+            "response_code": { "type": "integer" },
+            "error_message": { "type": "string" },
+            "latency": { "type": "number" },
+            "retry_count": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "validation_failed": { "type": "boolean", "enum": [true] },
+            "field_name": { "type": "string" },
+            "reason": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": ["event_name", "timestamp", "session_id", "platform", "app_version"],
+  "additionalProperties": false
+}

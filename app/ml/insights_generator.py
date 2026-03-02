@@ -20,8 +20,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 
-from app.db import get_session
-from app.models import Score, UserStrengths, UserEmotionalPatterns, User
+from app.db import safe_db_context
+from app.models import Score, UserStrengths, UserEmotionalPatterns, User, UserSession
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +72,12 @@ class EQInsightsGenerator:
     def _train_model_from_data(self) -> None:
         """Train ML model from historical user data."""
         try:
-            session = get_session()
-            try:
+            with safe_db_context() as session:
                 # Get historical scores with user data
                 scores_query = session.query(
                     Score.id, Score.username, Score.total_score, Score.sentiment_score,
-                    Score.age, Score.user_id, Score.timestamp
-                ).filter(Score.user_id.isnot(None)).all()
+                    Score.age, UserSession.user_id, Score.timestamp
+                ).join(UserSession, Score.session_id == UserSession.session_id).filter(UserSession.user_id.isnot(None)).all()
 
                 if len(scores_query) < 10:
                     logger.warning("Insufficient data for training ML model")
@@ -143,17 +142,14 @@ class EQInsightsGenerator:
                 # Save model
                 self._save_model()
 
-            finally:
-                session.close()
-
         except Exception as e:
             logger.error(f"Failed to train ML model: {e}")
 
     def _calculate_score_variance(self, session, user_id: int) -> float:
         """Calculate score variance for a user."""
         try:
-            scores = session.query(Score.total_score).filter(
-                Score.user_id == user_id
+            scores = session.query(Score.total_score).join(UserSession, Score.session_id == UserSession.session_id).filter(
+                UserSession.user_id == user_id
             ).all()
 
             if len(scores) < 2:
@@ -233,8 +229,7 @@ class EQInsightsGenerator:
             Dictionary with insights, recommendations, and improvement suggestions
         """
         try:
-            session = get_session()
-            try:
+            with safe_db_context() as session:
                 # Get user profile data
                 user_strengths = session.query(UserStrengths).filter(
                     UserStrengths.user_id == user_id
@@ -245,8 +240,8 @@ class EQInsightsGenerator:
                 ).first()
 
                 # Get historical scores
-                historical_scores = session.query(Score).filter(
-                    Score.user_id == user_id
+                historical_scores = session.query(Score).join(UserSession, Score.session_id == UserSession.session_id).filter(
+                    UserSession.user_id == user_id
                 ).order_by(Score.timestamp.desc()).limit(5).all()
 
                 # Calculate features
@@ -305,9 +300,6 @@ class EQInsightsGenerator:
                 insights['next_steps'] = self._generate_next_steps(insights)
 
                 return insights
-
-            finally:
-                session.close()
 
         except Exception as e:
             logger.error(f"Failed to generate insights: {e}")

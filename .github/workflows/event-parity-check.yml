@@ -1,0 +1,170 @@
+name: 📱 Event Parity Audit
+
+on:
+  # Run on every PR that touches analytics files
+  pull_request:
+    paths:
+      - 'mobile-app/**/AnalyticsEvents.*'
+      - 'shared/analytics/event_schema.json'
+      - 'scripts/audit_event_parity.py'
+  
+  # Weekly scheduled run (Monday at 9 AM UTC)
+  schedule:
+    - cron: '0 9 * * 1'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      fail_on_mismatch:
+        description: 'Fail workflow if mismatches found'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  parity-audit:
+    name: Run Event Parity Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Run Parity Audit
+        id: audit
+        run: |
+          python scripts/audit_event_parity.py --format markdown --output parity_report.md
+          python scripts/audit_event_parity.py --format json --output parity_report.json
+          
+          # Set output for subsequent steps
+          PARITY_SCORE=$(python -c "import json; print(json.load(open('parity_report.json'))['parity_score'])")
+          echo "parity_score=$PARITY_SCORE" >> $GITHUB_OUTPUT
+          
+          STATUS=$(python -c "import json; print(json.load(open('parity_report.json'))['status'])")
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+      
+      - name: Upload Report Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-reports
+          path: |
+            parity_report.md
+            parity_report.json
+          retention-days: 30
+      
+      - name: Comment PR with Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('parity_report.md', 'utf8');
+            
+            // Truncate if too long
+            const maxLength = 65000;
+            let body = report;
+            if (body.length > maxLength) {
+              body = body.substring(0, maxLength) + '\n\n... (truncated)';
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📱 Event Parity Audit Results\n\n${body}`
+            });
+      
+      - name: Check Parity Score
+        if: github.event.inputs.fail_on_mismatch != 'false'
+        run: |
+          PARITY_SCORE=${{ steps.audit.outputs.parity_score }}
+          echo "Parity Score: $PARITY_SCORE%"
+          
+          if (( $(echo "$PARITY_SCORE < 100" | bc -l) )); then
+            echo "::error::Event parity is not 100%. Score: $PARITY_SCORE%"
+            exit 1
+          fi
+      
+      - name: Create Issue on Weekly Failure
+        if: |
+          github.event_name == 'schedule' && 
+          steps.audit.outputs.parity_score != '100'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('parity_report.json', 'utf8'));
+            
+            const title = `🚨 Weekly Parity Audit Failed - Score: ${report.parity_score}%`;
+            
+            const body = `## Weekly Event Parity Audit Results
+            
+**Date**: ${new Date().toISOString()}
+**Status**: ${report.status}
+**Parity Score**: ${report.parity_score}%
+
+### Summary
+- Total Expected Events: ${report.summary.total_expected}
+- Matched Events: ${report.summary.matched_count}
+- Android Only: ${report.summary.android_only_count}
+- iOS Only: ${report.summary.ios_only_count}
+- Schema Mismatches: ${report.summary.schema_mismatches_count}
+
+### Action Required
+Please review the parity report and address any mismatches:
+1. Download artifacts from this workflow run
+2. Review the detailed markdown report
+3. Update the appropriate platform(s) to restore parity
+4. Re-run the audit to verify fixes
+
+### Quick Links
+- [Parity Checklist](https://github.com/${{ github.repository }}/blob/main/docs/MOBILE_EVENT_PARITY_CHECKLIST.md)
+- [Analytics Documentation](https://github.com/${{ github.repository }}/blob/main/shared/analytics/README.md)
+
+/cc @mobile-platform-team @data-analytics-team
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['analytics-parity', 'automated', 'priority-medium']
+            });
+      
+      - name: Update Parity Badge
+        if: github.event_name == 'schedule'
+        run: |
+          PARITY_SCORE=${{ steps.audit.outputs.parity_score }}
+          COLOR="brightgreen"
+          
+          if (( $(echo "$PARITY_SCORE < 90" | bc -l) )); then
+            COLOR="red"
+          elif (( $(echo "$PARITY_SCORE < 95" | bc -l) )); then
+            COLOR="orange"
+          elif (( $(echo "$PARITY_SCORE < 100" | bc -l) )); then
+            COLOR="yellow"
+          fi
+          
+          # Create badge URL (could be integrated with shields.io or similar)
+          echo "Parity badge color: $COLOR"
+
+  notify-success:
+    name: Notify on Success
+    needs: parity-audit
+    if: github.event_name == 'schedule' && success()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Log Success
+        run: |
+          echo "✅ Weekly parity audit completed successfully"
+          echo "Parity Score: ${{ needs.parity-audit.outputs.parity_score }}%"

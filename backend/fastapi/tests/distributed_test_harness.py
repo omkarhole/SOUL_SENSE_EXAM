@@ -31,14 +31,16 @@ def worker_task(worker_id: int, lock_resource: str, duration: float, iterations:
                 token = lock.get_fencing_token()
                 logger.info(f"Successfully acquired lock on {lock_resource}. Fencing token: {token}")
                 
-                # Simulate work
-                work_time = random.uniform(0.1, 1.0)
-                logger.debug(f"Working for {work_time:.2f}s...")
-                time.sleep(work_time)
-                
-                lock.release()
+                try:
+                    # Simulate work
+                    work_time = random.uniform(0.1, 1.0)
+                    logger.debug(f"Working for {work_time:.2f}s...")
+                    time.sleep(work_time)
+                finally:
+                    lock.release()
+                    logger.info(f"Work completed and lock released.")
+                    
                 success_count += 1
-                logger.info(f"Work completed and lock released.")
             else:
                 failure_count += 1
                 logger.warning(f"Could not acquire lock (contention). Retrying soon...")
