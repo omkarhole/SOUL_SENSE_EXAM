@@ -458,7 +458,7 @@ class TokenRevocation(Base):
     expires_at = Column(DateTime, nullable=False)
 
 class UserSession(Base):
-    """Track user login sessions with unique session IDs"""
+    """Track user login sessions with unique session IDs and device fingerprinting"""
     __tablename__ = 'user_sessions'
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, unique=True, nullable=False, index=True)
@@ -469,13 +469,27 @@ class UserSession(Base):
     is_active = Column(Boolean, default=True)
     last_activity = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=utc_now)
-    
+
+    # Device fingerprinting fields (#1230)
+    device_fingerprint_hash = Column(String(64), nullable=True, index=True)
+    device_user_agent = Column(Text, nullable=True)
+    device_accept_language = Column(String, nullable=True)
+    device_accept_encoding = Column(String, nullable=True)
+    device_screen_resolution = Column(String, nullable=True)
+    device_timezone_offset = Column(Integer, nullable=True)
+    device_platform = Column(String, nullable=True)
+    device_plugins_hash = Column(String, nullable=True)
+    device_canvas_fingerprint = Column(String, nullable=True)
+    device_webgl_fingerprint = Column(String, nullable=True)
+    device_fingerprint_created_at = Column(DateTime, nullable=True)
+
     user = relationship("User", back_populates="sessions")
-    
+
     __table_args__ = (
         Index('idx_session_user_active', 'user_id', 'is_active'),
         Index('idx_session_username_active', 'username', 'is_active'),
         Index('idx_session_created', 'created_at'),
+        Index('ix_user_sessions_device_fingerprint_hash', 'device_fingerprint_hash'),
     )
 
 class UserSyncSetting(Base):

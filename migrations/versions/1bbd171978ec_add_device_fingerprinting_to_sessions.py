@@ -1,26 +1,24 @@
-"""
-Add device fingerprinting fields to UserSession table (#1230)
+"""add_device_fingerprinting_to_sessions
 
-Revision ID: add_device_fingerprinting_to_sessions
-Revises: previous_revision_id
-Create Date: 2026-03-02
+Revision ID: 1bbd171978ec
+Revises: 9883f3a97d37
+Create Date: 2026-03-02 15:44:13.667107
 
-This migration adds device fingerprinting fields to the user_sessions table
-to support session binding with drift tolerance.
 """
+from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+
 
 # revision identifiers, used by Alembic.
-revision = 'add_device_fingerprinting_to_sessions'
-down_revision = '20260301_093000'  # Set this to the actual previous revision
-branch_labels = None
-depends_on = None
+revision: str = '1bbd171978ec'
+down_revision: Union[str, Sequence[str], None] = '9883f3a97d37'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
-def upgrade():
+def upgrade() -> None:
     """Add device fingerprinting columns to user_sessions table."""
     # Add device fingerprinting fields
     op.add_column('user_sessions', sa.Column('device_fingerprint_hash', sa.String(64), nullable=True))
@@ -44,7 +42,7 @@ def upgrade():
     )
 
 
-def downgrade():
+def downgrade() -> None:
     """Remove device fingerprinting columns from user_sessions table."""
     # Drop index
     op.drop_index('ix_user_sessions_device_fingerprint_hash', table_name='user_sessions')
