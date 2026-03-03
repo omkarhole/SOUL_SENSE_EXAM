@@ -311,9 +311,6 @@ class GamificationService:
             result = await db.execute(stmt)
             exists = result.scalar_one_or_none()
             if not exists:
-            check_stmt = select(Achievement).filter(Achievement.achievement_id == ach_data["achievement_id"])
-            check_res = await db.execute(check_stmt)
-            if not check_res.scalar_one_or_none():
                 ach = Achievement(**ach_data)
                 db.add(ach)
         await db.commit()

@@ -297,7 +297,7 @@ class AuthAnomalyEvent(Base):
     user = relationship("User", back_populates="anomaly_events")
 
 class AuditLog(Base):
-    """Audit Log for tracking security-critical user actions."""
+    """Audit Log for tracking security-critical user actions with tamper-evident hash chaining (#1265)."""
     __tablename__ = 'audit_logs'
     tenant_id = Column(UUID(as_uuid=True), index=True, nullable=True)
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -305,6 +305,12 @@ class AuditLog(Base):
     action = Column(String, nullable=False)
     details = Column(Text, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Tamper-evident hash chaining fields (#1265)
+    previous_hash = Column(String(64), nullable=False, index=True)  # SHA-256 hash of previous entry
+    current_hash = Column(String(64), nullable=False, unique=True, index=True)  # SHA-256 hash of this entry
+    chain_hash = Column(String(64), nullable=False, index=True)  # Running chain hash for quick validation
+
     user = relationship("User", back_populates="audit_logs")
 
 class AuditSnapshot(Base):

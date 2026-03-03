@@ -187,22 +187,16 @@ class AuthService:
         await self._record_login_attempt(identifier_lower, True, ip_address, user_id=user.id)
         await self.update_last_login(user.id)
         
+        # Comprehensive Audit Log
         await AuditService.log_event(
             user.id,
             "LOGIN",
-        # 7. Success - Update last login & Audit
-        await self._record_login_attempt(identifier_lower, True, ip_address, user_id=user.id)
-        await self.update_last_login(user.id)
-        
-        # Comprehensive Audit Log
-        await AuditService.log_auth_event(
-            'login',
-            user.username,
-            details={"method": "password", "outcome": "success"},
             ip_address=ip_address,
             user_agent=user_agent,
-            db_session=self.db
+            details={"method": "password", "device_fingerprint": device_fingerprint}
         )
+        await self._record_login_attempt(identifier_lower, True, ip_address, user_id=user.id)
+        await self.update_last_login(user.id)
 
         # Anomaly Detection (#1263) - Check for suspicious behavior after successful auth
         try:
@@ -466,16 +460,9 @@ class AuthService:
             LoginAttempt.is_successful == False,
             LoginAttempt.timestamp >= thirty_mins_ago
         ).order_by(desc(LoginAttempt.timestamp))
-        
+
         result = await self.db.execute(stmt)
         failed_attempts = result.scalars().all()
-        count = len(failed_attempts)
-
-        ).order_by(LoginAttempt.timestamp.desc())
-        
-        result = await self.db.execute(stmt)
-        failed_attempts = list(result.scalars().all())
-
         count = len(failed_attempts)
         lockout_duration = 0
         if count >= 7: lockout_duration = 300
@@ -772,7 +759,7 @@ class AuthService:
         """Revoke access token (Async)."""
         from jose import jwt
         from ..root_models import TokenRevocation
-    def revoke_access_token(self, token: str) -> None:
+    async def revoke_access_token(self, token: str) -> None:
         """Revoke an access token by adding it to the Redis blacklist."""
         try:
             # Use Redis blacklist for fast lookups
@@ -857,8 +844,6 @@ class AuthService:
             user.password_hash = await self.hash_password(new_password)
             await self.db.execute(update(RefreshToken).filter(RefreshToken.user_id == user.id).values(is_revoked=True))
             await self.db.commit()
-                self.db.commit()
-                logger.info(f"Access token also revoked in database for user: {payload.get('sub')}")
 
         except Exception as e:
             logger.error(f"Failed to revoke access token: {e}")
