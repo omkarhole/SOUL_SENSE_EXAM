@@ -496,6 +496,11 @@ def create_app() -> FastAPI:
     from .middleware.signed_url_middleware import SignedURLValidationMiddleware
     app.add_middleware(SignedURLValidationMiddleware)
 
+    # Auth Anomaly Detection Middleware (#1263)
+    # Detects suspicious authentication behavior and applies risk-based enforcement
+    from .middleware.auth_anomaly_middleware import AuthAnomalyMiddleware
+    app.add_middleware(AuthAnomalyMiddleware)
+
     # Device Fingerprint Validation Middleware (#1230)
     # Validates device fingerprints on authenticated requests to prevent session hijacking
     from .middleware.device_fingerprint_middleware import DeviceFingerprintValidationMiddleware

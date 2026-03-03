@@ -26,6 +26,7 @@ from sqlalchemy import select, update, delete, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import OperationalError
 from .audit_service import AuditService
+from .auth_anomaly_service import AuthAnomalyService
 from ..utils.db_transaction import transactional, async_transactional, retry_on_transient
 from ..utils.security import get_password_hash, verify_password, is_hashed, check_password_history
 from ..utils.race_condition_protection import with_row_lock
@@ -183,14 +184,14 @@ class AuthService:
             user.deleted_at = None
             user.is_active = True
         
-        await self._record_login_attempt(identifier_lower, True, ip_address)
+        await self._record_login_attempt(identifier_lower, True, ip_address, user_id=user.id)
         await self.update_last_login(user.id)
         
         await AuditService.log_event(
             user.id,
             "LOGIN",
         # 7. Success - Update last login & Audit
-        await self._record_login_attempt(identifier_lower, True, ip_address)
+        await self._record_login_attempt(identifier_lower, True, ip_address, user_id=user.id)
         await self.update_last_login(user.id)
         
         # Comprehensive Audit Log
@@ -202,6 +203,33 @@ class AuthService:
             user_agent=user_agent,
             db_session=self.db
         )
+
+        # Anomaly Detection (#1263) - Check for suspicious behavior after successful auth
+        try:
+            anomaly_service = AuthAnomalyService(self.db)
+            risk_score = await anomaly_service.calculate_risk_score(
+                user_id=user.id,
+                identifier=identifier_lower,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                device_fingerprint=""  # Could be enhanced with actual fingerprint
+            )
+
+            # Log anomalies for monitoring
+            if risk_score.risk_level.value in ['medium', 'high', 'critical']:
+                from ..services.auth_anomaly_service import AnomalyType
+                await anomaly_service.log_anomaly_event(
+                    user_id=user.id,
+                    anomaly_type=AnomalyType.BRUTE_FORCE if "Brute Force" in str(risk_score.triggered_rules) else AnomalyType.SUSPICIOUS_IP,
+                    risk_score=risk_score,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    details={"post_auth_check": True, "successful_login": True}
+                )
+
+        except Exception as e:
+            logger.error(f"Error in post-auth anomaly detection: {e}")
+            # Don't fail authentication if anomaly detection has issues
 
         return user
 
@@ -466,13 +494,17 @@ class AuthService:
 
         return False, None, 0
 
-    async def _record_login_attempt(self, username: str, success: bool, ip_address: str, reason: Optional[str] = None):
+    async def _record_login_attempt(self, username: str, success: bool, ip_address: str, reason: Optional[str] = None, user_id: Optional[int] = None):
         """Record login attempt (Async)."""
         """Record the login attempt audit log."""
         try:
             attempt = LoginAttempt(
-                username=username, ip_address=ip_address, is_successful=success,
-                failure_reason=reason, timestamp=datetime.now(timezone.utc)
+                user_id=user_id,
+                username=username,
+                ip_address=ip_address,
+                is_successful=success,
+                failure_reason=reason,
+                timestamp=datetime.now(timezone.utc)
             )
             self.db.add(attempt)
             await self.db.commit()

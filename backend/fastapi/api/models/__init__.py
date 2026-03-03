@@ -66,6 +66,7 @@ class User(Base):
     audit_snapshots = relationship("AuditSnapshot", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     step_up_tokens = relationship("StepUpToken", back_populates="user", cascade="all, delete-orphan")
+    anomaly_events = relationship("AuthAnomalyEvent", back_populates="user", cascade="all, delete-orphan")
     
     # Gamification Relationships
     achievements = relationship("UserAchievement", back_populates="user", cascade="all, delete-orphan")
@@ -271,12 +272,29 @@ class LoginAttempt(Base):
     """
     __tablename__ = 'login_attempts'
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
     username = Column(String, index=True)
     ip_address = Column(String)
     timestamp = Column(DateTime, default=datetime.utcnow)
     is_successful = Column(Boolean)
     user_agent = Column(String, nullable=True)
     failure_reason = Column(String, nullable=True)
+
+class AuthAnomalyEvent(Base):
+    """Track authentication anomaly events for security monitoring (#1263)."""
+    __tablename__ = 'auth_anomaly_events'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
+    anomaly_type = Column(String, nullable=False, index=True)  # AnomalyType enum value
+    risk_level = Column(String, nullable=False)  # RiskLevel enum value
+    risk_score = Column(Float, nullable=False)
+    ip_address = Column(String, nullable=False)
+    user_agent = Column(String, nullable=True)
+    triggered_rules = Column(Text, nullable=True)  # JSON array of triggered rule names
+    details = Column(Text, nullable=True)  # JSON object with anomaly details
+    created_at = Column(DateTime, default=utc_now, index=True)
+
+    user = relationship("User", back_populates="anomaly_events")
 
 class AuditLog(Base):
     """Audit Log for tracking security-critical user actions."""
