@@ -49,7 +49,19 @@ jobs:
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
       - name: Install security tools
-        run: pip install bandit safety
+        run: pip install bandit safety cyclonedx-bom
+
+      - name: Generate SBOM
+        run: |
+          python scripts/generate_sbom.py --output sbom.json --project-root .
+          python scripts/generate_sbom.py --validate-only --output sbom.json
+
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.json
+          retention-days: 365
 
       - name: Run Bandit security scan
         run: bandit -r backend/ --severity-level high
@@ -58,6 +70,18 @@ jobs:
         run: |
           safety check -r requirements.txt --severity-threshold high
           if [ -f backend/fastapi/requirements.txt ]; then safety check -r backend/fastapi/requirements.txt --severity-threshold high; fi
+
+      - name: Run Vulnerability Gate
+        run: python scripts/vulnerability_gate.py --threshold high --report vulnerability-report.json --project-root .
+        env:
+          VULNERABILITY_GATE_ENABLED: true
+
+      - name: Upload Vulnerability Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-report-${{ github.sha }}
+          path: vulnerability-report.json
+          retention-days: 90
 
       - name: Test Root App
         timeout-minutes: 20

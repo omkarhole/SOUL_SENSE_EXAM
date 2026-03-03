@@ -1534,3 +1534,114 @@ class ApiKey(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
+
+# Vulnerability Exception Models for SBOM and Security Gate #1266
+class VulnerabilityException(Base):
+    """Model for managing temporary vulnerability exceptions."""
+    __tablename__ = 'vulnerability_exceptions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    package_name = Column(String(255), nullable=False, index=True)
+    package_version = Column(String(100), nullable=False)
+    vulnerability_id = Column(String(100), nullable=False, index=True)  # CVE ID or similar
+    severity = Column(String(50), nullable=False)  # critical, high, medium, low
+    tool_name = Column(String(100), nullable=False)  # safety, bandit, etc.
+
+    # Exception details
+    justification = Column(Text, nullable=False)
+    approved_by = Column(String(255), nullable=False)  # User who approved
+    approved_at = Column(DateTime, default=utc_now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)  # When exception expires
+
+    # Audit fields
+    created_by = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
+    # Additional metadata
+    vuln_metadata = Column(JSON, nullable=True)  # Additional vulnerability details
+
+    __table_args__ = (
+        Index('idx_vuln_exception_active', 'is_active', 'expires_at'),
+        Index('idx_vuln_exception_package', 'package_name', 'package_version'),
+    )
+
+    def is_expired(self) -> bool:
+        """Check if the exception has expired."""
+        return utc_now() > self.expires_at
+
+    def is_valid(self) -> bool:
+        """Check if the exception is still valid."""
+        return self.is_active and not self.is_expired()
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        return {
+            "id": self.id,
+            "package_name": self.package_name,
+            "package_version": self.package_version,
+            "vulnerability_id": self.vulnerability_id,
+            "severity": self.severity,
+            "tool_name": self.tool_name,
+            "justification": self.justification,
+            "approved_by": self.approved_by,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "is_active": self.is_active,
+            "is_expired": self.is_expired(),
+            "is_valid": self.is_valid(),
+            "metadata": self.vuln_metadata
+        }
+
+
+class SBOMArtifact(Base):
+    """Model for storing SBOM artifacts and metadata."""
+    __tablename__ = 'sbom_artifacts'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    build_id = Column(String(255), nullable=False, index=True)  # CI build identifier
+    commit_sha = Column(String(40), nullable=False, index=True)
+    branch = Column(String(255), nullable=False)
+
+    # SBOM details
+    format = Column(String(50), nullable=False)  # json, xml, etc.
+    spec_version = Column(String(20), nullable=False)  # CycloneDX version
+    component_count = Column(Integer, nullable=False)
+
+    # File storage
+    sbom_path = Column(String(500), nullable=False)  # Path to stored SBOM file
+    checksum = Column(String(128), nullable=False)  # SHA-256 of SBOM file
+
+    # Metadata
+    generated_at = Column(DateTime, default=utc_now, nullable=False)
+    generated_by = Column(String(255), nullable=False)  # CI system or user
+    sbom_metadata = Column(JSON, nullable=True)  # Additional SBOM metadata
+
+    __table_args__ = (
+        Index('idx_sbom_build', 'build_id', 'commit_sha'),
+        Index('idx_sbom_generated', 'generated_at'),
+    )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        return {
+            "id": self.id,
+            "build_id": self.build_id,
+            "commit_sha": self.commit_sha,
+            "branch": self.branch,
+            "format": self.format,
+            "spec_version": self.spec_version,
+            "component_count": self.component_count,
+            "sbom_path": self.sbom_path,
+            "checksum": self.checksum,
+            "generated_at": self.generated_at.isoformat() if self.generated_at else None,
+            "generated_by": self.generated_by,
+            "metadata": self.sbom_metadata
+        }
+
