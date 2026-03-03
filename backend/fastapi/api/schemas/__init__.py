@@ -1347,16 +1347,20 @@ class SyncSettingConflictResponse(BaseModel):
 # ============================================================================
 
 class AuditLogResponse(BaseModel):
-    """Schema for individual audit log entry."""
+    """Schema for individual audit log entry with tamper-evident hash chaining (#1265)."""
     id: int
+    user_id: int
     action: str
-    ip_address: Optional[str]
-    user_agent: Optional[str]
     details: Optional[Dict[str, Any]] = None
     timestamp: datetime
 
+    # Tamper-evident hash chaining fields (#1265)
+    previous_hash: str
+    current_hash: str
+    chain_hash: str
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     @field_validator('details', mode='before')
     @classmethod
     def parse_details(cls, v):
