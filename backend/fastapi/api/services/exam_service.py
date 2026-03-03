@@ -42,7 +42,6 @@ class ExamService:
 
     @staticmethod
     async def start_exam(db: AsyncSession, user: User) -> str:
-    async def start_exam(db: AsyncSession, user: User):
         """
         Initiates a new exam session (Async).
         """
@@ -145,8 +144,6 @@ class ExamService:
         try:
             if session.status == 'STARTED':
                 session.status = 'IN_PROGRESS'
-        """Saves a single question response linked to the user and session."""
-        try:
             # Use row-level locking to prevent concurrent duplicate submissions
             await with_row_lock(
                 db,
@@ -216,9 +213,6 @@ class ExamService:
     @retry_on_transient(retries=3)
     async def save_score(db: AsyncSession, user: User, session_id: str, data: ExamResultCreate):
         """Saves final exam score (Async)."""
-            logger.error(f"Failed to save response for user_id={user.id}: {e}")
-            await db.rollback()
-            raise e
 
     @staticmethod
     @async_retry_on_transient(retries=3)
@@ -278,44 +272,33 @@ class ExamService:
                     logger.error(f"Encryption failed for reflection: {ce}")
 
             async with transactional(db) as tx_session:
-            # ── ATOMIC WRITE ─────────────────────────────────────────────────
-            # ── ATOMIC SCORE + GAMIFICATION WRITE ─────────────────────────────
-            # All operations must succeed together to prevent inconsistent state
-            async with db.begin():  # Use async transaction context manager
-                new_score = Score(
-                    username=user.username,
-                    user_id=user.id,
-                    age=data.age,
-                    total_score=data.total_score,
-                    sentiment_score=data.sentiment_score,
-                    reflection_text=reflection,
-                    is_rushed=data.is_rushed,
-                    is_inconsistent=data.is_inconsistent,
-                    timestamp=datetime.now(UTC).isoformat(),
-                    detailed_age_group=data.detailed_age_group,
-                    session_id=session_id
-                )
-                tx_session.add(new_score)
-                await tx_session.flush()
+                # ── ATOMIC WRITE ─────────────────────────────────────────────────
+                # ── ATOMIC SCORE + GAMIFICATION WRITE ─────────────────────────────
+                # All operations must succeed together to prevent inconsistent state
+                async with db.begin():  # Use async transaction context manager
+                    new_score = Score(
+                        username=user.username,
+                        user_id=user.id,
+                        age=data.age,
+                        total_score=data.total_score,
+                        sentiment_score=data.sentiment_score,
+                        reflection_text=reflection,
+                        is_rushed=data.is_rushed,
+                        is_inconsistent=data.is_inconsistent,
+                        timestamp=datetime.now(UTC).isoformat(),
+                        detailed_age_group=data.detailed_age_group,
+                        session_id=session_id
+                    )
+                    tx_session.add(new_score)
+                    await tx_session.flush()
 
-                session.status = 'COMPLETED'
-                session.completed_at = datetime.now(UTC)
-                await db.flush()  # Assign new_score.id before gamification
+                    session.status = 'COMPLETED'
+                    session.completed_at = datetime.now(UTC)
+                    await db.flush()  # Assign new_score.id before gamification
 
-                await GamificationService.award_xp(tx_session, user.id, 100, "Assessment completion")
-                await GamificationService.update_streak(tx_session, user.id, "assessment")
-                await GamificationService.check_achievements(tx_session, user.id, "assessment")
-
-            await db.refresh(new_score)
-                # Execute gamification updates atomically
-                try:
-                    await GamificationService.award_xp(db, user.id, 100, "Assessment completion")
-                    await GamificationService.update_streak(db, user.id, "assessment")
-                    await GamificationService.check_achievements(db, user.id, "assessment")
-                except Exception as ge:
-                    logger.error(f"Gamification update failed for user_id={user.id}: {ge}")
-                    # Don't fail the entire transaction for gamification errors
-                    # The score is still valid, gamification can be retried separately
+                    await GamificationService.award_xp(tx_session, user.id, 100, "Assessment completion")
+                    await GamificationService.update_streak(tx_session, user.id, "assessment")
+                    await GamificationService.check_achievements(tx_session, user.id, "assessment")
 
                 await db.refresh(new_score)
             # ─────────────────────────────────────────────────────────────────

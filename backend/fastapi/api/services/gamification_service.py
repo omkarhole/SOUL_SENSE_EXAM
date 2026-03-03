@@ -91,8 +91,6 @@ class GamificationService:
 
     @staticmethod
     async def check_achievements(db: AsyncSession, user_id: int, activity: str) -> List[UserAchievement]:
-        """Check achievements (Async)."""
-        ua_stmt = select(UserAchievement).filter(
         """Check if any achievements are unlocked by the recent activity."""
         # Get all potential achievements for the category/activity
         ua_stmt = select(UserAchievement.achievement_id).filter(

@@ -491,6 +491,11 @@ def create_app() -> FastAPI:
     from .middleware.security import SecurityHeadersMiddleware
     app.add_middleware(SecurityHeadersMiddleware)
 
+    # Signed URL Validation Middleware (#1262)
+    # Validates signed URLs for object storage with hardening policies
+    from .middleware.signed_url_middleware import SignedURLValidationMiddleware
+    app.add_middleware(SignedURLValidationMiddleware)
+
     # Device Fingerprint Validation Middleware (#1230)
     # Validates device fingerprints on authenticated requests to prevent session hijacking
     from .middleware.device_fingerprint_middleware import DeviceFingerprintValidationMiddleware

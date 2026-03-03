@@ -14,10 +14,8 @@ from typing import Dict, Any, List, Optional
 import logging
 import os
 
-from ..services.db_service import get_db, AsyncSessionLocal
-from ..services.export_service import ExportService as ExportServiceV1
-from ..services.export_service_v2 import ExportServiceV2
-from ..services.background_task_service import BackgroundTaskService, TaskStatus, TaskType
+from ..services.storage_service import StorageService
+from ..config import get_settings_instance
 from ..models import User, ExportRecord, BackgroundJob
 from .auth import get_current_user
 from app.core import (
@@ -462,7 +460,7 @@ async def download_export(
 ):
     """
     Download an export file.
-    Supports both V1 (filename) and V2 (export_id) identifiers.
+    For S3 storage, returns a signed URL. For local storage, serves file directly.
     """
     # First, check if it's a V2 export (by export_id)
     stmt = select(ExportRecord).filter(
@@ -470,12 +468,8 @@ async def download_export(
     )
     result = await db.execute(stmt)
     export = result.scalar_one_or_none()
-    """Download an export file."""
-    from sqlalchemy import select
-    stmt = select(ExportRecord).filter(ExportRecord.export_id == identifier)
-    res = await db.execute(stmt)
-    export = res.scalar_one_or_none()
 
+    settings = get_settings_instance()
     filepath = None
     filename = None
 
@@ -495,6 +489,33 @@ async def download_export(
         filepath = str(ExportServiceV1.EXPORT_DIR / identifier)
         filename = identifier
 
+    # For S3 storage, generate signed URL
+    if settings.storage_type == "s3" and filepath and filepath.startswith("s3://"):
+        try:
+            # Parse S3 URI
+            bucket_key = filepath[5:]  # Remove 's3://'
+            bucket, key = bucket_key.split('/', 1)
+
+            # Generate signed URL with hardening
+            signed_url_data = await StorageService.generate_signed_url(
+                bucket=bucket,
+                key=key,
+                method='GET',
+                expiration_seconds=900  # 15 minutes
+            )
+
+            return {
+                "download_url": signed_url_data['signed_url'],
+                "expires_at": signed_url_data['expires_at'].isoformat(),
+                "filename": filename,
+                "method": "GET"
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to generate signed URL for {filepath}: {e}")
+            raise InternalServerError(message="Failed to generate secure download link")
+
+    # For local storage, serve file directly
     if not os.path.exists(filepath):
         raise NotFoundError(resource="Export file")
 
