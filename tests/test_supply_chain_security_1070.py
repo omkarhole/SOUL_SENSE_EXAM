@@ -11,6 +11,7 @@ Comprehensive test suite covering:
 
 import json
 import pytest
+import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -356,6 +357,11 @@ class TestMainFunction:
 class TestSecurityEdgeCases:
     """Test edge cases and error conditions."""
 
+    @pytest.fixture
+    def checker(self, tmp_path):
+        """Create a checker instance with temporary project root."""
+        return SupplyChainSecurityChecker(project_root=tmp_path)
+
     def test_empty_requirements_file(self, checker, tmp_path):
         """Test parsing empty requirements file."""
         req_file = tmp_path / "empty.txt"
@@ -400,15 +406,20 @@ class TestSecurityEdgeCases:
         )
         
         with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = Exception("Command failed")
+            mock_run.side_effect = subprocess.CalledProcessError(1, 'pip')
             
             passed, warnings = checker.check_transitive_dependencies()
-            # Should handle gracefully
+            # Should handle gracefully and return empty warnings on subprocess error
             assert isinstance(warnings, list)
 
 
 class TestHashCoverageReport:
     """Test hash coverage reporting."""
+
+    @pytest.fixture
+    def checker(self, tmp_path):
+        """Create a checker instance with temporary project root."""
+        return SupplyChainSecurityChecker(project_root=tmp_path)
 
     def test_full_hash_coverage(self, checker, tmp_path):
         """Test report with 100% hash coverage."""
