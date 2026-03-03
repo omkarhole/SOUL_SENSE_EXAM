@@ -13,11 +13,11 @@ import logging
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 import os
-from poison_resistant_lock import PoisonResistantRLock, register_lock
+from scripts.utilities.poison_resistant_lock import PoisonResistantRLock, register_lock
 
 # Import FD resource manager for tracking database file descriptors
 try:
-    from fd_resource_manager import get_fd_manager, FDType
+    from scripts.utilities.fd_resource_manager import get_fd_manager, FDType
     _fd_manager_available = True
 except ImportError:
     _fd_manager_available = False

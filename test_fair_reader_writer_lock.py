@@ -20,7 +20,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fair_reader_writer_lock import FairReaderWriterLock, get_fair_reader_writer_lock
+from scripts.utilities.fair_reader_writer_lock import FairReaderWriterLock, get_fair_reader_writer_lock
 
 
 class TestFairReaderWriterLock:

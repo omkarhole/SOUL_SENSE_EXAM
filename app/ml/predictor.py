@@ -54,7 +54,7 @@ class SoulSenseMLPredictor:
             # Try to load from versioning system first
             if self.use_versioning:
                 try:
-                    from model_versioning import ModelVersioningManager
+                    from scripts.utilities.model_versioning import ModelVersioningManager
                     versioning_manager = ModelVersioningManager()
                     model_data, metadata = versioning_manager.registry.load_model("soulsense_predictor")
                     self.model = model_data.get("model")

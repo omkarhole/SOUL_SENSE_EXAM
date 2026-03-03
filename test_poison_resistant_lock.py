@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from poison_resistant_lock import (
+from scripts.utilities.poison_resistant_lock import (
     PoisonResistantLock,
     PoisonResistantRLock,
     safe_lock_operation,

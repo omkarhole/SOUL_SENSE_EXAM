@@ -20,7 +20,7 @@ import psutil
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fd_resource_manager import (
+from scripts.utilities.fd_resource_manager import (
     FDResourceManager, FDType, get_fd_manager, init_fd_manager,
     EventLoopMonitor, track_socket_fd, track_file_fd, safe_close_fd
 )

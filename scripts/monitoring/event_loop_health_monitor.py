@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from fd_resource_manager import FDResourceManager, EventLoopMonitor, FDType
+from scripts.utilities.fd_resource_manager import FDResourceManager, EventLoopMonitor, FDType
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from ..schemas import HealthResponse, ServiceStatus
 from ..services.db_service import get_db
 from ..config import get_settings
-from poison_resistant_lock import PoisonResistantLock, register_lock
+from scripts.utilities.poison_resistant_lock import PoisonResistantLock, register_lock
 
 router = APIRouter()
 logger = logging.getLogger("api.health")

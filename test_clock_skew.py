@@ -40,7 +40,7 @@ class TestClockSkewMonitor(unittest.TestCase):
     def tearDown(self):
         """Clean up test fixtures."""
         # Reset global monitor
-        import clock_skew_monitor
+        from scripts.monitoring import clock_skew_monitor
         clock_skew_monitor._clock_monitor = ClockSkewMonitor()
 
     def test_initialization(self):

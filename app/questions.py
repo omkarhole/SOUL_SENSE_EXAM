@@ -12,7 +12,7 @@ from app.db import safe_db_context
 from app.models import Question, QuestionCache, StatisticsCache
 from app.exceptions import DatabaseError, ResourceError
 from app.config import DATA_DIR
-from fair_reader_writer_lock import get_fair_reader_writer_lock
+from scripts.utilities.fair_reader_writer_lock import get_fair_reader_writer_lock
 
 logger = logging.getLogger(__name__)
 
