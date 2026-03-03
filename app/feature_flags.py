@@ -82,6 +82,13 @@ EXPERIMENTAL_FLAGS: Dict[str, FeatureFlag] = {
         experimental=True,
         category="data"
     ),
+    "migration_blast_radius": FeatureFlag(
+        name="migration_blast_radius",
+        default=False,
+        description="Enable migration blast radius pre-approval checklist validation",
+        experimental=True,
+        category="infra"
+    ),
 }
 
 
