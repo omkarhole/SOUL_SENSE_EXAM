@@ -87,6 +87,7 @@ class JournalService:
             with safe_db_context() as session:
                 query = session.query(JournalEntry)\
                     .filter_by(username=username)\
+                    .filter(JournalEntry.is_deleted == False)\
                     .order_by(desc(JournalEntry.entry_date))
                 
                 session.expire_on_commit = False
@@ -128,12 +129,40 @@ class JournalService:
                 entries = session.query(JournalEntry)\
                     .filter(JournalEntry.username == username)\
                     .filter(JournalEntry.entry_date >= start_date)\
+                    .filter(JournalEntry.is_deleted == False)\
                     .order_by(desc(JournalEntry.entry_date))\
                     .all()
                 return entries
         except Exception as e:
             logger.error(f"Failed to retrieve recent entries: {e}")
             return []
+    @staticmethod
+    def delete_entry(entry_id: int) -> bool:
+        """
+        Soft-delete a journal entry (Issue #1331).
+        Sets is_deleted flag and records deletion timestamp.
+        
+        Args:
+            entry_id: The ID of the entry to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with safe_db_context() as session:
+                entry = session.query(JournalEntry).filter(JournalEntry.id == entry_id).first()
+                if not entry:
+                    logger.warning(f"Entry {entry_id} not found")
+                    return False
+                
+                entry.is_deleted = True
+                entry.deleted_at = datetime.now()
+                session.commit()
+                logger.info(f"Entry {entry_id} soft-deleted successfully")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete entry {entry_id}: {e}")
+            return False
 
     # === TIMELINE METHODS FOR ISSUE #1324 ===
 
