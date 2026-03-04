@@ -1,7 +1,8 @@
 import logging
 from typing import List, Optional, Any, cast
-from sqlalchemy.orm import Session
-from ..models import Score, Response, Question, QuestionCategory
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from ..models import Score, Response, Question, QuestionCategory, UserSession
 from ..schemas import DetailedExamResult, CategoryScore, Recommendation
 
 logger = logging.getLogger("api.exam")
@@ -17,6 +18,8 @@ class AssessmentResultsService:
         """
         # 1. Fetch main score
         stmt = select(Score).filter(Score.id == assessment_id, Score.user_id == user_id)
+        # 1. Fetch the main score record
+        stmt = select(Score).join(UserSession, Score.session_id == UserSession.session_id).filter(Score.id == assessment_id, UserSession.user_id == user_id)
         result = await db.execute(stmt)
         score = result.scalar_one_or_none()
         
@@ -25,6 +28,7 @@ class AssessmentResultsService:
             return None
 
         # 2. Get all responses joined with Question and Category
+        # 2. Get all responses for this session/user
         resp_stmt = (
             select(Response, Question, QuestionCategory)
             .join(Question, Response.question_id == Question.id)
@@ -35,6 +39,14 @@ class AssessmentResultsService:
         responses = resp_result.all()
 
         if not responses:
+            .all()
+            .filter(Response.session_id == score.session_id)
+        )
+        resp_res = await db.execute(resp_stmt)
+        responses = resp_res.all()
+
+        if not responses:
+            logger.info(f"No detailed responses found for assessment session {score.session_id}")
             return DetailedExamResult(
                 assessment_id=score.id,
                 total_score=float(score.total_score),
@@ -81,7 +93,7 @@ class AssessmentResultsService:
             assessment_id=score.id,
             total_score=float(score.total_score),
             max_possible_score=total_max,
-            overall_percentage=round(cast(Any, overall_pct), 1),
+            overall_percentage=round(cast(Any, overall_pct), 2),
             timestamp=score.timestamp,
             category_breakdown=breakdown,
             recommendations=recommendations

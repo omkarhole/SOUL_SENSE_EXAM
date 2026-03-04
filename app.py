@@ -15,41 +15,15 @@ from app.i18n_manager import get_i18n
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "soulsense.db")
 
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
+# Import and initialize connection manager for TIME_WAIT prevention
+from app.db_connection_manager import init_database_schema, execute_query, execute_write
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS scores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    age INTEGER,
-    total_score INTEGER,
-
-    avg_response REAL,
-    max_response INTEGER,
-    min_response INTEGER,
-    score_variance REAL,
-
-    questions_attempted INTEGER,
-    completion_ratio REAL,
-    avg_time_per_question REAL,
-    time_taken_seconds INTEGER
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS app_settings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    key TEXT UNIQUE,
-    value TEXT
-)
-""")
-conn.commit()
+# Initialize database schema using connection pooling
+init_database_schema()
 
 # Load language preference
-cursor.execute("SELECT value FROM app_settings WHERE key = 'language'")
-result = cursor.fetchone()
-language = result[0] if result else 'en'
+result = execute_query("SELECT value FROM app_settings WHERE key = 'language'")
+language = result[0][0] if result else 'en'
 
 # Initialize i18n manager with saved language
 i18n = get_i18n()
@@ -250,7 +224,8 @@ def start_quiz(username, age):
         elapsed = int(time.time() - start_time)
         analytics = compute_analytics(responses, elapsed, total_questions)
 
-        cursor.execute("""
+        # Use connection manager for TIME_WAIT prevention
+        execute_write("""
             INSERT INTO scores
             (username, age, total_score, avg_response, max_response, min_response,
              score_variance, questions_attempted, completion_ratio,
@@ -262,7 +237,6 @@ def start_quiz(username, age):
             analytics["variance"], analytics["attempted"],
             analytics["completion"], analytics["avg_time"], elapsed
         ))
-        conn.commit()
 
         messagebox.showinfo(
             i18n.get("results.completed"),
@@ -272,7 +246,6 @@ def start_quiz(username, age):
         )
 
         quiz.destroy()
-        conn.close()
 
     def next_question():
         nonlocal current_q, score

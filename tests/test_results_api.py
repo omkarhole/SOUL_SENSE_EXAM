@@ -61,14 +61,12 @@ def test_get_detailed_results_success(temp_db, auth_headers):
     
     resp1 = Response(
         username=user.username,
-        user_id=user.id,
         question_id=q1.id,
         response_value=5,
         session_id=session_id
     )
     resp2 = Response(
         username=user.username,
-        user_id=user.id,
         question_id=q2.id,
         response_value=4,
         session_id=session_id

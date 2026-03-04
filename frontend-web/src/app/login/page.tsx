@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { UseFormReturn } from 'react-hook-form';
 import { useAuth } from '@/hooks/useAuth';
 import { authApi } from '@/lib/api/auth';
+import { handleApiError } from '@/lib/errorHandler';
 import { isValidCallbackUrl } from '@/lib/utils/url';
 
 type LoginFormData = z.infer<typeof loginSchema>;
@@ -60,6 +61,7 @@ export default function LoginPage() {
       setSessionId(data.session_id);
     } catch (error: any) {
       console.error('Failed to fetch CAPTCHA:', error);
+      handleApiError(error, 'Failed to load CAPTCHA');
       setCaptchaError(error.message || 'Failed to load');
     } finally {
       setCaptchaLoading(false);
@@ -89,6 +91,47 @@ export default function LoginPage() {
 
     return () => clearInterval(timer);
   }, [lockoutTime]);
+
+  // Handle OAuth callback tokens from URL hash (Google/Github redirect return)
+  const { loginOAuth } = useAuth();
+  useEffect(() => {
+    const handleOAuthCallback = async () => {
+      // Check if we have hash params (standard for OIDC implicit flow)
+      const hash = window.location.hash;
+      const search = window.location.search;
+
+      const params = new URLSearchParams(hash.replace('#', '?') || search);
+      const accessToken = params.get('access_token');
+      const idToken = params.get('id_token');
+      const code = params.get('code'); // standard OAuth code
+
+      if (accessToken || idToken || code) {
+        setIsLoggingIn(true);
+        try {
+          const provider = localStorage.getItem('oauth_provider') || 'google';
+          console.log(`Processing OAuth callback for ${provider}...`);
+
+          await loginOAuth({
+            provider,
+            idToken: idToken || undefined,
+            accessToken: accessToken || code || undefined // Send code as access_token for now, backend can handle it
+          }, true);
+
+          toast.success("Social login successful!");
+          router.push(callbackUrl);
+        } catch (error: any) {
+          console.error("OAuth callback error:", error);
+          toast.error("Social login failed. Please try again or use credentials.");
+        } finally {
+          setIsLoggingIn(false);
+          // Cleanup URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    };
+
+    handleOAuthCallback();
+  }, [loginOAuth, router, callbackUrl]);
 
   const handleLoginSubmit = async (data: LoginFormData, methods: UseFormReturn<LoginFormData>) => {
     if (lockoutTime > 0) return;
@@ -345,7 +388,17 @@ export default function LoginPage() {
     <>
       <SessionWarningModal />
       <AuthLayout title="Welcome back" subtitle="Enter your credentials to access your account">
-        <Form schema={loginSchema} onSubmit={handleLoginSubmit} className="space-y-5">
+        <Form
+          schema={loginSchema}
+          onSubmit={handleLoginSubmit}
+          className="space-y-5"
+          defaultValues={{
+            identifier: '',
+            password: '',
+            captcha_input: '',
+            rememberMe: false,
+          }}
+        >
           {(methods) => (
             <>
               {/* Error Messages */}

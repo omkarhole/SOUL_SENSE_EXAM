@@ -12,6 +12,7 @@ from app.db import safe_db_context
 from app.models import Question, QuestionCache, StatisticsCache
 from app.exceptions import DatabaseError, ResourceError
 from app.config import DATA_DIR
+from scripts.utilities.fair_reader_writer_lock import get_fair_reader_writer_lock
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,9 @@ logger = logging.getLogger(__name__)
 # Simple in-memory storage for active questions
 # Tuple structure: (id, question_text, tooltip, min_age, max_age)
 _ALL_QUESTIONS: List[Tuple[int, str, Optional[str], int, int]] = []
-_INIT_LOCK = threading.Lock()
+
+# Fair reader-writer lock to prevent writer starvation
+_RW_LOCK = get_fair_reader_writer_lock()
 
 
 def initialize_questions() -> bool:
@@ -29,29 +32,29 @@ def initialize_questions() -> bool:
     Safe to call multiple times (reloads data).
     """
     global _ALL_QUESTIONS
-    
-    with _INIT_LOCK:
+
+    with _RW_LOCK.write_lock():
         try:
             # Use specific context for initialization
             with safe_db_context() as session:
                 # Optimized query fetching only needed columns
                 qs = session.query(
-                    Question.id, 
-                    Question.question_text, 
-                    Question.tooltip, 
-                    Question.min_age, 
+                    Question.id,
+                    Question.question_text,
+                    Question.tooltip,
+                    Question.min_age,
                     Question.max_age
                 ).filter(
                     Question.is_active == 1
                 ).order_by(Question.id).all()
-                
+
                 # Convert to list of tuples immediately
                 # Explicit conversion to satisfy MyPy and ensure pure tuples
                 _ALL_QUESTIONS = [(q.id, q.question_text, q.tooltip, q.min_age, q.max_age) for q in qs]
-                
+
                 logger.info(f"Loaded {len(_ALL_QUESTIONS)} active questions into memory.")
                 return True
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize questions: {e}")
             return False
@@ -81,19 +84,34 @@ def load_questions(
             age = int(age) if age else None
         except ValueError:
             age = None
-            
-    # Lazy Init Fallback (if list is empty due to startup race or first run)
-    if not _ALL_QUESTIONS:
-        logger.info("Questions not initialized, loading now...")
-        initialize_questions()
-    
-    # Return filter result
-    if age is None:
-        # Return a copy to prevent modification of global list
-        return list(_ALL_QUESTIONS)
-        
-    # In-memory filter is extremely fast
-    return [q for q in _ALL_QUESTIONS if q[3] <= age <= q[4]]
+
+    with _RW_LOCK.read_lock():
+        # Lazy Init Fallback (if list is empty due to startup race or first run)
+        if not _ALL_QUESTIONS:
+            # Release read lock temporarily for initialization
+            pass
+        else:
+            # Return filter result
+            if age is None:
+                # Return a copy to prevent modification of global list
+                return list(_ALL_QUESTIONS)
+
+            # In-memory filter is extremely fast
+            return [q for q in _ALL_QUESTIONS if q[3] <= age <= q[4]]
+
+    # Need to initialize - use write lock for this
+    with _RW_LOCK.write_lock():
+        if not _ALL_QUESTIONS:  # Double-check after acquiring write lock
+            logger.info("Questions not initialized, loading now...")
+            initialize_questions()
+
+        # Return filter result after initialization
+        if age is None:
+            # Return a copy to prevent modification of global list
+            return list(_ALL_QUESTIONS)
+
+        # In-memory filter is extremely fast
+        return [q for q in _ALL_QUESTIONS if q[3] <= age <= q[4]]
 
 
 SATISFACTION_QUESTIONS = {
@@ -312,14 +330,26 @@ SATISFACTION_OPTIONS = {
 
 def get_question_count(age: Optional[int] = None) -> int:
     """Get count of active questions (optimized)"""
-    # Lazy Init Fallback
-    if not _ALL_QUESTIONS:
-        initialize_questions()
-        
-    if age is None:
-        return len(_ALL_QUESTIONS)
-        
-    return len([q for q in _ALL_QUESTIONS if q[3] <= age <= q[4]])
+    with _RW_LOCK.read_lock():
+        # Lazy Init Fallback
+        if not _ALL_QUESTIONS:
+            # Release read lock temporarily for initialization
+            pass
+        else:
+            if age is None:
+                return len(_ALL_QUESTIONS)
+
+            return len([q for q in _ALL_QUESTIONS if q[3] <= age <= q[4]])
+
+    # Need to initialize - use write lock for this
+    with _RW_LOCK.write_lock():
+        if not _ALL_QUESTIONS:  # Double-check after acquiring write lock
+            initialize_questions()
+
+        if age is None:
+            return len(_ALL_QUESTIONS)
+
+        return len([q for q in _ALL_QUESTIONS if q[3] <= age <= q[4]])
 
 def preload_all_question_sets():
     """Deprecated: In-memory loading handles this automatically"""
@@ -328,7 +358,7 @@ def preload_all_question_sets():
 def clear_all_caches():
     """Clear in-memory cache and reload from DB"""
     global _ALL_QUESTIONS
-    with _INIT_LOCK:
+    with _RW_LOCK.write_lock():
         _ALL_QUESTIONS = []
     # Trigger reload
     initialize_questions()

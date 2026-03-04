@@ -1,9 +1,11 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..services.db_service import get_db
 from ..services.deep_dive_service import DeepDiveService
+from app.core import NotFoundError
 from ..schemas import (
     DeepDiveType, 
     DeepDiveQuestion, 
@@ -27,7 +29,6 @@ async def get_recommendations(
 ):
     """
     Get recommended deep dives based on user's recent performance.
-    Returns list of Deep Dive IDs (e.g. ['strengths_deep_dive']).
     """
     return await DeepDiveService.get_recommendations(db, current_user)
 
@@ -42,7 +43,7 @@ async def get_questions(
     try:
         return DeepDiveService.get_questions(assessment_type, count)
     except Exception:
-        raise HTTPException(status_code=404, detail="Assessment type not found")
+        raise NotFoundError(resource="Assessment type", resource_id=assessment_type)
 
 @router.post("/submit", response_model=DeepDiveResultResponse)
 async def submit_deep_dive(

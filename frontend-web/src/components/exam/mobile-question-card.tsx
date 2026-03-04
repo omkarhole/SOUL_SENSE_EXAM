@@ -142,7 +142,10 @@ export const MobileQuestionCard: React.FC<MobileQuestionCardProps> = ({
             </CardHeader>
 
             <CardContent className="pt-4 pb-6 px-4 md:pt-6 md:pb-8 md:px-6">
-              <h2 className="text-xl md:text-2xl lg:text-3xl font-bold text-slate-800 dark:text-slate-100 leading-tight">
+              <h2
+                id={`question-${question.id}`}
+                className="text-xl md:text-2xl lg:text-3xl font-bold text-slate-800 dark:text-slate-100 leading-tight"
+              >
                 {question.text}
               </h2>
             </CardContent>

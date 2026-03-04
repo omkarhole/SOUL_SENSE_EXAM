@@ -55,7 +55,7 @@ from sklearn.svm import SVC
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from model_versioning import ModelVersioningManager, create_versioning_manager
+from scripts.utilities.model_versioning import ModelVersioningManager, create_versioning_manager
 
 # Configure logging
 logging.basicConfig(

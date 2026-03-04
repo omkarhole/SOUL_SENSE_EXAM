@@ -16,13 +16,13 @@ from jose import jwt
 from ..constants.errors import ErrorCode
 from ..exceptions import AuthException
 
-from ..config import get_settings
+from ..config import get_settings_instance, get_settings
 from ..services.db_service import get_db
 from ..schemas import UserCreate
 from ..models import User
 from sqlalchemy.orm import Session
 
-settings = get_settings()
+settings = get_settings_instance()
 
 # CRITICAL SECURITY GUARD: Prevent MockAuthService from loading in production
 if settings.ENVIRONMENT == "production":

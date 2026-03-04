@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { ProfileCard, ProfileForm } from '@/components/profile';
@@ -8,7 +9,6 @@ import { Button } from '@/components/ui';
 import { Card, CardContent } from '@/components/ui';
 import { Skeleton } from '@/components/ui';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useApi } from '@/hooks/useApi';
 import { resultsApi } from '@/lib/api/results';
 import { journalApi } from '@/lib/api/journal';
 
@@ -19,14 +19,14 @@ export default function ProfilePage() {
   const { profile, isLoading: loading, error, updateProfile, refetch } = useProfile();
   const [isEditing, setIsEditing] = useState(false);
 
-  const { data: examHistory } = useApi({
-    apiFn: () => resultsApi.getHistory(1, 1),
-    deps: [],
+  const { data: examHistory } = useQuery({
+    queryKey: ['profile', 'exam-history'],
+    queryFn: () => resultsApi.getHistory(1, 1),
   });
 
-  const { data: journalAnalytics } = useApi({
-    apiFn: () => journalApi.getAnalytics(),
-    deps: [],
+  const { data: journalAnalytics } = useQuery({
+    queryKey: ['profile', 'journal-analytics'],
+    queryFn: () => journalApi.getAnalytics(),
   });
 
   const handleEditToggle = () => {
@@ -34,7 +34,27 @@ export default function ProfilePage() {
   };
 
   const handleSave = async (data: any) => {
-    await updateProfile(data);
+    // Transform camelCase to snake_case for API
+    const transformedData = {
+      first_name: data.firstName,
+      last_name: data.lastName,
+      bio: data.bio,
+      age: data.age,
+      gender: data.gender,
+      goals: {
+        short_term: data.shortTermGoals,
+        long_term: data.longTermGoals,
+      },
+      sleep_hours: data.sleepHours,
+      exercise_freq: data.exerciseFrequency,
+      dietary_patterns: data.dietType,
+      has_therapist: data.hasTherapist,
+      support_network_size: data.supportNetworkSize,
+      primary_support_type: data.primarySupportType,
+      primary_goal: data.primaryGoal,
+      focus_areas: data.focusAreas,
+    };
+    await updateProfile(transformedData);
     setIsEditing(false);
   };
 
@@ -58,7 +78,9 @@ export default function ProfilePage() {
     return (
       <div className="max-w-5xl mx-auto py-12 px-6">
         <div className="text-center bg-destructive/5 p-12 rounded-2xl border border-destructive/10">
-          <p className="text-destructive font-bold mb-6 text-lg">Failed to load profile: {error}</p>
+          <p className="text-destructive font-bold mb-6 text-lg">
+            Failed to load profile: {error || 'Unknown error'}
+          </p>
           <Button onClick={refetch} variant="outline" className="font-bold">
             Try Again
           </Button>

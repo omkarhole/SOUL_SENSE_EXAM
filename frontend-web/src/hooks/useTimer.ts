@@ -15,9 +15,14 @@ export const useTimer = ({ durationMinutes, onTimeUp, isPaused = false }: UseTim
   const pausedTimeRef = useRef<number | null>(null);
 
   const startTimer = useCallback(() => {
-    if (intervalRef.current) return;
+    // Defensive clearance of existing intervals to prevent acceleration
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
 
-    startTimeRef.current = Date.now();
+    if (startTimeRef.current === null) {
+      startTimeRef.current = Date.now();
+    }
     pausedTimeRef.current = null;
 
     intervalRef.current = setInterval(() => {
@@ -35,7 +40,7 @@ export const useTimer = ({ durationMinutes, onTimeUp, isPaused = false }: UseTim
           intervalRef.current = null;
         }
       }
-    }, 100); // Update every 100ms for smooth display
+    }, 1000); // Optimized to 1000ms from 100ms
   }, [durationMinutes, onTimeUp]);
 
   const pauseTimer = useCallback(() => {
@@ -47,16 +52,30 @@ export const useTimer = ({ durationMinutes, onTimeUp, isPaused = false }: UseTim
   }, []);
 
   const resumeTimer = useCallback(() => {
-    if (pausedTimeRef.current && startTimeRef.current) {
-      // Adjust start time to account for paused duration
-      const pausedDuration = Date.now() - pausedTimeRef.current;
-      startTimeRef.current += pausedDuration;
+    if (pausedTimeRef.current) {
+      if (startTimeRef.current) {
+        // Adjust start time to account for paused duration
+        const pausedDuration = Date.now() - pausedTimeRef.current;
+        startTimeRef.current += pausedDuration;
+      }
       pausedTimeRef.current = null;
       startTimer();
     }
   }, [startTimer]);
 
+  // Track the previous duration to know when to reset
+  const prevDurationRef = useRef(durationMinutes);
+
   useEffect(() => {
+    // 1. Reset logic: If duration changed, reset state first
+    if (prevDurationRef.current !== durationMinutes) {
+      setTimeLeft(durationMinutes * 60);
+      startTimeRef.current = null;
+      pausedTimeRef.current = null;
+      prevDurationRef.current = durationMinutes;
+    }
+
+    // 2. Control logic: Handle Pause/Resume/Start
     if (isPaused) {
       pauseTimer();
     } else {
@@ -67,26 +86,14 @@ export const useTimer = ({ durationMinutes, onTimeUp, isPaused = false }: UseTim
       }
     }
 
+    // 3. Cleanup: Absolute protection against leaking intervals
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
     };
-  }, [isPaused, startTimer, pauseTimer, resumeTimer]);
-
-  // Reset timer when duration changes
-  useEffect(() => {
-    setTimeLeft(durationMinutes * 60);
-    startTimeRef.current = null;
-    pausedTimeRef.current = null;
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    if (!isPaused) {
-      startTimer();
-    }
-  }, [durationMinutes, startTimer, isPaused]);
+  }, [isPaused, durationMinutes, startTimer, pauseTimer, resumeTimer]);
 
   const minutes = Math.floor(timeLeft / 60);
   const seconds = timeLeft % 60;

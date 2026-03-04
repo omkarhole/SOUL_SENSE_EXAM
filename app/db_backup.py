@@ -14,7 +14,8 @@ from contextlib import contextmanager
 
 from app.config import DATABASE_URL, DB_PATH, DATA_DIR
 from app.exceptions import DatabaseError
-
+from app.db import get_engine, safe_db_context
+from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 def is_sqlite() -> bool:
@@ -125,36 +126,44 @@ def create_backup(description: str = "") -> BackupInfo:
     
     try:
         # Use SQLite's backup API for safe copy
-        source_conn = sqlite3.connect(DB_PATH)
+        engine = get_engine()
+        source_conn = engine.raw_connection()
+        
+        # We need to handle potential wrappers in some versions of SQLAlchemy
+        raw_source = getattr(source_conn, "connection", source_conn)
+        
+        # Open destination connection
         dest_conn = sqlite3.connect(backup_path)
         
-        with dest_conn:
-            source_conn.backup(dest_conn)
-        
-        source_conn.close()
-        dest_conn.close()
-        
-        # Get file size
-        size_bytes = os.path.getsize(backup_path)
-        
-        # Create metadata file for description
-        if description:
-            meta_path = backup_path + ".meta"
-            try:
-                with open(meta_path, "w", encoding="utf-8") as f:
-                    f.write(description)
-            except Exception as e:
-                logger.warning(f"Failed to write backup metadata: {e}")
-        
-        logger.info(f"Created backup: {backup_path} ({size_bytes} bytes)")
-        
-        return BackupInfo(
-            path=backup_path,
-            filename=backup_filename,
-            timestamp=timestamp,
-            size_bytes=size_bytes,
-            description=description
-        )
+        try:
+            with dest_conn:
+                raw_source.backup(dest_conn)
+            
+            # Get file size
+            size_bytes = os.path.getsize(backup_path)
+            
+            # Create metadata file for description
+            if description:
+                meta_path = backup_path + ".meta"
+                try:
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        f.write(description)
+                except Exception as e:
+                    logger.warning(f"Failed to write backup metadata: {e}")
+            
+            logger.info(f"Created backup: {backup_path} ({size_bytes} bytes)")
+            
+            return BackupInfo(
+                path=backup_path,
+                filename=backup_filename,
+                timestamp=timestamp,
+                size_bytes=size_bytes,
+                description=description
+            )
+        finally:
+            dest_conn.close()
+            # Return source connection to pool
+            source_conn.close()
         
     except sqlite3.Error as e:
         # Clean up partial backup if it exists
@@ -203,15 +212,18 @@ def restore_backup(backup_path: str) -> bool:
     try:
         # Use SQLite's backup API for safe restoration
         source_conn = sqlite3.connect(backup_path)
-        dest_conn = sqlite3.connect(DB_PATH)
         
-        with dest_conn:
-            source_conn.backup(dest_conn)
+        engine = get_engine()
+        dest_conn_wrapper = engine.raw_connection()
+        raw_dest = getattr(dest_conn_wrapper, "connection", dest_conn_wrapper)
         
-        source_conn.close()
-        dest_conn.close()
-        
-        logger.info(f"Successfully restored database from: {backup_path}")
+        try:
+            # Note: During restoration, we backup FROM the file TO the current DB
+            source_conn.backup(raw_dest)
+            logger.info(f"Successfully restored database from: {backup_path}")
+        finally:
+            source_conn.close()
+            dest_conn_wrapper.close()
         
         # Remove safety backup after successful restore
         if os.path.exists(safety_path):

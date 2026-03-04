@@ -334,7 +334,8 @@ if __name__ == "__main__":
         # Handle system signals (Ctrl+C, termination signals)
         def signal_handler(signum, frame):
             app.logger.info(f"Received signal {signum}, initiating shutdown")
-            app.graceful_shutdown()
+            # Defer shutdown to avoid DB operations in signal handler (race condition fix #1184)
+            root.after(0, app.graceful_shutdown)
 
         import signal
         signal.signal(signal.SIGINT, signal_handler)

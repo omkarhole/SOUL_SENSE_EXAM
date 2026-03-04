@@ -5,8 +5,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui';
 import { Input } from '@/components/ui';
 import { Label } from '@/components/ui';
-import { useDebounce } from '@/hooks/useDebounce';
-import { useState } from 'react';
+import { useDebounceCallback } from '@/hooks/useDebounceCallback';
+import { useId, useState } from 'react';
 import { Globe, Clock, Calendar, Lock, Shield, Mail, Chrome } from 'lucide-react';
 
 interface AccountSettingsProps {
@@ -15,7 +15,11 @@ interface AccountSettingsProps {
 }
 
 export function AccountSettings({ settings, onChange }: AccountSettingsProps) {
-  const debouncedOnChange = useDebounce(onChange, 500);
+  const scopeId = useId();
+  const currentPasswordId = `${scopeId}-current-password`;
+  const newPasswordId = `${scopeId}-new-password`;
+  const confirmPasswordId = `${scopeId}-confirm-password`;
+  const debouncedOnChange = useDebounceCallback(onChange, 500);
   const [passwordData, setPasswordData] = useState({
     current: '',
     new: '',
@@ -134,11 +138,11 @@ export function AccountSettings({ settings, onChange }: AccountSettingsProps) {
         <div className="grid grid-cols-1 gap-4 bg-muted/10 p-6 rounded-2xl border border-border/40">
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="current-password" className="text-xs font-bold px-1">
+              <Label htmlFor={currentPasswordId} className="text-xs font-bold px-1">
                 Current Password
               </Label>
               <Input
-                id="current-password"
+                id={currentPasswordId}
                 type="password"
                 value={passwordData.current}
                 onChange={(e) => handlePasswordChange('current', e.target.value)}
@@ -149,11 +153,11 @@ export function AccountSettings({ settings, onChange }: AccountSettingsProps) {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="new-password" className="text-xs font-bold px-1">
+                <Label htmlFor={newPasswordId} className="text-xs font-bold px-1">
                   New Password
                 </Label>
                 <Input
-                  id="new-password"
+                  id={newPasswordId}
                   type="password"
                   value={passwordData.new}
                   onChange={(e) => handlePasswordChange('new', e.target.value)}
@@ -163,11 +167,11 @@ export function AccountSettings({ settings, onChange }: AccountSettingsProps) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="confirm-password" className="text-xs font-bold px-1">
+                <Label htmlFor={confirmPasswordId} className="text-xs font-bold px-1">
                   Confirm Password
                 </Label>
                 <Input
-                  id="confirm-password"
+                  id={confirmPasswordId}
                   type="password"
                   value={passwordData.confirm}
                   onChange={(e) => handlePasswordChange('confirm', e.target.value)}

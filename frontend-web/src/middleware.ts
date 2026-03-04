@@ -9,19 +9,19 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define protected routes
-  const protectedPrefixes = ["/app", "/admin"];
+  const protectedPrefixes = ['/app', '/admin'];
 
   // Define auth routes
-  const authRoutes = ["/login", "/register", "/forgot-password"];
+  const authRoutes = ['/login', '/register', '/forgot-password'];
 
   // Read authentication token from cookies
   const token = request.cookies.get('refresh_token')?.value;
 
   // Check if current path is protected
-  const isProtected = protectedPrefixes.some(prefix => pathname.startsWith(prefix));
+  const isProtected = protectedPrefixes.some((prefix) => pathname.startsWith(prefix));
 
   // Check if current path is an auth route
-  const isAuthRoute = authRoutes.some(route => pathname.startsWith(route));
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
 
   if (isProtected && !token) {
     // Redirect unauthenticated users to login
@@ -33,7 +33,7 @@ export function middleware(request: NextRequest) {
 
   if (isAuthRoute && token) {
     // Redirect authenticated users away from auth pages to dashboard
-    return NextResponse.redirect(new URL('/app/dashboard', request.url));
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
   return NextResponse.next();

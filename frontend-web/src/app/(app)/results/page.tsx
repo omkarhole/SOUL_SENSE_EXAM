@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { HistoryChart, ExamResult as ChartResult } from '@/components/results';
+import { HistoryChart } from '@/lib/dynamic-imports';
+import { ExamResult as ChartResult } from '@/components/results/history-chart';
 import {
   Button,
   Card,

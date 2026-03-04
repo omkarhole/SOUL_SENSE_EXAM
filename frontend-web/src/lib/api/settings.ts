@@ -18,6 +18,9 @@ export interface UserSettings {
     analytics: boolean;
     data_retention_days: number;
     profile_visibility: 'public' | 'private' | 'friends';
+    consent_ml_training: boolean;
+    consent_aggregated_research: boolean;
+    crisis_mode_enabled: boolean;
   };
   accessibility: {
     high_contrast: boolean;
@@ -60,6 +63,9 @@ export const settingsApi = {
           analytics: true,
           data_retention_days: 365,
           profile_visibility: 'private',
+          consent_ml_training: false,
+          consent_aggregated_research: false,
+          crisis_mode_enabled: false,
         },
         accessibility: {
           high_contrast: false,

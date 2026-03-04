@@ -37,12 +37,13 @@ def generate_viz():
     
     query = """
     SELECT 
-        s.user_id,
+        us.user_id,
         s.total_score,
         AVG(j.sentiment_score) as avg_sentiment
     FROM scores s
-    INNER JOIN journal_entries j ON s.user_id = j.user_id
-    GROUP BY s.user_id, s.total_score
+    INNER JOIN user_sessions us ON s.session_id = us.session_id
+    INNER JOIN journal_entries j ON us.user_id = j.user_id
+    GROUP BY us.user_id, s.total_score
     """
     
     try:

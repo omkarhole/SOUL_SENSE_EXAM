@@ -14,6 +14,9 @@ import {
 } from '@/components/ui';
 import { ScoreGauge, CategoryBreakdown, RecommendationCard } from '@/components/results';
 import { ArrowLeft, Download, RefreshCw, Calendar, Clock, Loader2, FileX2 } from 'lucide-react';
+import { CategoryBreakdown, RecommendationCard } from '@/components/results';
+import { ScoreGauge } from '@/lib/dynamic-imports';
+import { ArrowLeft, Download, RefreshCw, Calendar, Clock, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api/client';
 

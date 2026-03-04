@@ -307,6 +307,7 @@ class ResponseFactory:
         username: str = "test_user",
         question_id: int = 1,
         response_value: int = 3,
+        session_id: Optional[str] = None,
         age_group: str = "adult",
         detailed_age_group: str = "Young Adult (18-25)",
         timestamp: Optional[str] = None,
@@ -315,11 +316,11 @@ class ResponseFactory:
         """Create a test response record."""
         response = Response(
             username=user.username if user else username,
-            user_id=user.id if user else None,
             question_id=question_id,
             response_value=response_value,
             age_group=age_group,
             detailed_age_group=detailed_age_group,
+            session_id=session_id,
             timestamp=timestamp or datetime.utcnow().isoformat()
         )
         

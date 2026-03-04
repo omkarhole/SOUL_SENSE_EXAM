@@ -68,7 +68,6 @@ async def get_challenges(
     db: AsyncSession = Depends(get_db)
 ):
     """Get available challenges."""
-    # Implementation pending Phase 3
     return []
 
 @router.post("/seed", status_code=status.HTTP_201_CREATED)
@@ -76,5 +75,6 @@ async def seed_achievements(
     db: AsyncSession = Depends(get_db)
 ):
     """Seed initial achievements (Admin only in production)."""
+    """Seed initial achievements."""
     await GamificationService.seed_initial_achievements(db)
     return {"message": "Achievements seeded"}

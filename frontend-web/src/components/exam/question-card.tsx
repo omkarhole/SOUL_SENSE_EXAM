@@ -76,7 +76,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         </CardHeader>
 
         <CardContent className="pt-6 pb-8">
-          <h2 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-slate-100 leading-tight">
+          <h2
+            id={`question-${question.id}`}
+            className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-slate-100 leading-tight"
+          >
             {question.text}
           </h2>
         </CardContent>

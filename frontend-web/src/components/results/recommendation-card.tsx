@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import {
@@ -72,6 +72,9 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
   disabled = false,
 }) => {
   // Support both controlled and uncontrolled state
+  const scopeId = useId();
+  const headingId = `${scopeId}-heading`;
+  const contentId = `${scopeId}-content`;
   const [internalExpanded, setInternalExpanded] = useState(false);
   const isControlled = controlledExpanded !== undefined && onToggle !== undefined;
   const isExpanded = isControlled ? controlledExpanded : internalExpanded;
@@ -161,7 +164,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
               {/* Title */}
               <div className="flex-1 min-w-0">
                 <h3
-                  id={`recommendation-${safeCategoryName.replace(/\s+/g, '-').toLowerCase()}`}
+                  id={headingId}
                   className="font-bold text-base text-slate-900 dark:text-white leading-tight"
                 >
                   {safeCategoryName}
@@ -194,7 +197,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
                   disabled={disabled}
                   aria-expanded={isExpanded}
                   aria-label={isExpanded ? 'Collapse recommendation' : 'Expand recommendation'}
-                  aria-controls={`recommendation-content-${safeCategoryName.replace(/\s+/g, '-').toLowerCase()}`}
+                  aria-controls={contentId}
                   className={cn(
                     'p-1.5 rounded-lg transition-all',
                     'hover:bg-slate-100 dark:hover:bg-slate-800',
@@ -219,9 +222,9 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
         <CardContent className="pt-0">
           {/* Description */}
           <div
-            id={`recommendation-content-${safeCategoryName.replace(/\s+/g, '-').toLowerCase()}`}
+            id={contentId}
             role="region"
-            aria-labelledby={`recommendation-${safeCategoryName.replace(/\s+/g, '-').toLowerCase()}`}
+            aria-labelledby={headingId}
             className={cn(
               'text-sm text-slate-600 dark:text-slate-300 leading-relaxed',
               isExpanded && safeMessage.length > 500 && 'max-h-96 overflow-y-auto pr-2'

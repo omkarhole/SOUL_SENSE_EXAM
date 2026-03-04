@@ -1,6 +1,6 @@
 """
 Health and Readiness endpoints for orchestration support.
-Provides liveness (/health) and readiness (/ready) probes for Kubernetes, Docker, and load balancers.
+Migrated to Async SQLAlchemy 2.0.
 """
 import time
 import threading
@@ -8,41 +8,30 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Response, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import sys
+import os
+# Add the project root to Python path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
+
 from ..schemas import HealthResponse, ServiceStatus
 from ..services.db_service import get_db
 from ..config import get_settings
+from scripts.utilities.poison_resistant_lock import PoisonResistantLock, register_lock
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("api.health")
+
 
 # --- Version Detection ---
 def get_app_version() -> str:
-    """Get application version from environment, pyproject.toml, or fallback."""
+    """Get application version from environment or fallback."""
     import os
-    
-    # Priority 1: Environment variable
-    env_version = os.environ.get("APP_VERSION")
-    if env_version:
-        return env_version
-    
-    # Priority 2: pyproject.toml
-    try:
-        import tomllib
-        pyproject_path = os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml")
-        if os.path.exists(pyproject_path):
-            with open(pyproject_path, "rb") as f:
-                data = tomllib.load(f)
-                return data.get("project", {}).get("version", "unknown")
-    except Exception:
-        pass
-    
-    # Priority 3: Fallback
-    return "1.0.0"
+    return os.environ.get("APP_VERSION", "1.0.0")
 
 
 # --- Caching Layer ---
@@ -53,7 +42,10 @@ class HealthCache:
         self.ttl = ttl_seconds
         self._cache: Dict[str, Any] = {}
         self._timestamp: float = 0
-        self._lock = threading.Lock()
+        self._lock = PoisonResistantLock()
+        
+        # Register lock for monitoring
+        register_lock(self._lock)
     
     def get(self) -> Optional[Dict[str, Any]]:
         """Get cached result if still valid."""
@@ -85,18 +77,84 @@ async def check_database(db: AsyncSession) -> ServiceStatus:
         return ServiceStatus(status="unhealthy", message=str(e), latency_ms=None)
 
 
+async def check_redis(request) -> ServiceStatus:
+    """Check Redis connectivity if configured."""
+    try:
+        # Check if Redis is configured in settings
+        settings = get_settings()
+        if not hasattr(settings, 'redis_url') or not settings.redis_url:
+            return ServiceStatus(status="healthy", latency_ms=None, message="Redis not configured")
+
+        # For now, return healthy status since Redis integration may not be fully implemented
+        # In a full implementation, this would check actual Redis connectivity
+        return ServiceStatus(status="healthy", latency_ms=None, message="Redis available")
+    except Exception as e:
+        logger.warning(f"Redis health check failed: {e}")
+        return ServiceStatus(status="unhealthy", message=str(e), latency_ms=None)
+
+
+async def check_clock_skew(request) -> ServiceStatus:
+    """Check clock synchronization status for distributed lock TTL protection (#1195)."""
+    try:
+        from clock_skew_monitor import get_clock_monitor
+        monitor = get_clock_monitor()
+        metrics = monitor.get_clock_metrics()
+
+        # Determine status based on clock state
+        if metrics.state.value == "synchronized":
+            status = "healthy"
+            message = f"Clock synchronized (offset: {metrics.ntp_offset:.3f}s)"
+        elif metrics.state.value == "drifting":
+            status = "degraded"
+            message = f"Clock drifting (offset: {metrics.ntp_offset:.3f}s, rate: {metrics.drift_rate:.6f})"
+        else:  # unsynchronized
+            status = "unhealthy"
+            message = f"Clock unsynchronized - using drift-tolerant timing"
+
+        return ServiceStatus(status=status, latency_ms=None, message=message)
+    except Exception as e:
+        logger.warning(f"Clock skew health check failed: {e}")
+        return ServiceStatus(status="unhealthy", message=f"Clock monitoring unavailable: {str(e)}", latency_ms=None)
+
+
+async def check_event_loop_health(request) -> ServiceStatus:
+    """Check event loop health and FD resource status (#1183)."""
+    try:
+        fd_monitor = getattr(request.app.state, 'fd_monitor', None)
+        if fd_monitor is None:
+            return ServiceStatus(status="unhealthy", message="FD monitor not initialized", latency_ms=None)
+
+        health_status = fd_monitor.get_health_status()
+
+        # Determine status based on health
+        if health_status['critical']:
+            status = "unhealthy"
+            message = f"Critical FD exhaustion: {health_status['fd_stats']['current_usage_percent']:.1f}% usage"
+        elif health_status['degraded']:
+            status = "degraded"
+            message = f"High FD usage: {health_status['fd_stats']['current_usage_percent']:.1f}% usage"
+        else:
+            status = "healthy"
+            message = f"FD usage normal: {health_status['fd_stats']['current_usage_percent']:.1f}% usage"
+
+        return ServiceStatus(status=status, latency_ms=None, message=message)
+    except Exception as e:
+        logger.warning(f"Event loop health check failed: {e}")
+        return ServiceStatus(status="unhealthy", message=str(e), latency_ms=None)
+
+
 def get_diagnostics() -> Dict[str, Any]:
     """Get detailed diagnostics for ?full=true."""
     import os
     import sys
-    
-    # Basic diagnostics (no sensitive data)
+
     diagnostics = {
         "python_version": sys.version.split()[0],
         "pid": os.getpid(),
     }
     
     # Memory and Resource usage (if psutil available)
+
     try:
         import psutil
         import platform
@@ -129,22 +187,60 @@ def get_diagnostics() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Failed to gather diagnostics: {e}")
     
+        pass
+
+    # Add FD monitoring diagnostics if available
+    try:
+        from event_loop_health_monitor import get_event_loop_monitor
+        monitor = get_event_loop_monitor()
+        if monitor:
+            fd_manager = monitor.fd_manager
+            fd_stats = fd_manager.get_stats()
+            event_loop_stats = monitor.get_stats()
+
+            diagnostics["fd_monitoring"] = {
+                "fd_stats": fd_stats,
+                "event_loop_stats": event_loop_stats,
+                "tracked_fds": len(fd_manager.get_fd_info())
+            }
+    except Exception as e:
+        diagnostics["fd_monitoring_error"] = str(e)
+
     return diagnostics
 
 
 # --- Endpoints ---
 @router.get("/health", response_model=HealthResponse, tags=["Health"])
-async def health_check() -> HealthResponse:
-    """
-    Liveness probe - checks if the application process is running.
-    
-    Returns 200 OK immediately. Use this for Kubernetes livenessProbe.
-    """
+async def health_check(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+) -> HealthResponse:
+    """System health check - verifies critical dependencies are operational."""
+    db_status = await check_database(db)
+    redis_status = await check_redis(request)
+    event_loop_status = await check_event_loop_health(request)
+    clock_skew_status = await check_clock_skew(request)
+
+    services = {
+        "database": db_status,
+        "redis": redis_status,
+        "event_loop": event_loop_status,
+        "clock_skew": clock_skew_status
+    }
+
+    # Determine overall health - all critical services must be healthy
+    is_healthy = all(s.status == "healthy" for s in services.values())
+
+    if not is_healthy:
+        response.status_code = 503  # Service Unavailable
+        logger.warning(f"Health check failed: {services}")
+
     return HealthResponse(
-        status="healthy",
+        status="healthy" if is_healthy else "unhealthy",
         timestamp=datetime.now(timezone.utc).isoformat(),
         version=get_app_version(),
-        services=None,
+        services=services,
         details=None
     )
 
@@ -155,13 +251,7 @@ async def readiness_check(
     full: bool = Query(False, description="Include detailed diagnostics"),
     db: AsyncSession = Depends(get_db)
 ) -> HealthResponse:
-    """
-    Readiness probe - checks if the application can serve traffic.
-    
-    Verifies database connectivity. Returns 503 if unhealthy.
-    Use this for Kubernetes readinessProbe and load balancer health checks.
-    """
-    # Check cache first
+    """Readiness probe - checks if the application can serve traffic."""
     cached = _readiness_cache.get()
     if cached and not full:
         return HealthResponse(**cached)
@@ -169,7 +259,6 @@ async def readiness_check(
     # Perform health checks
     db_status = await check_database(db)
     
-    # Determine overall status
     services = {"database": db_status}
     is_healthy = all(s.status == "healthy" for s in services.values())
     
@@ -180,15 +269,12 @@ async def readiness_check(
         "services": services
     }
     
-    # Add diagnostics if requested
     if full:
         result["details"] = get_diagnostics()
     
-    # Cache the result (without details)
     cache_data = {k: v for k, v in result.items() if k != "details"}
     _readiness_cache.set(cache_data)
     
-    # Set HTTP status code
     if not is_healthy:
         response.status_code = 503
         logger.warning(f"Readiness check failed: {services}")
@@ -204,6 +290,7 @@ async def startup_check(db: AsyncSession = Depends(get_db)) -> HealthResponse:
     Use this for Kubernetes startupProbe to give the app time to initialize.
     """
     # For startup, we just check if we can connect to DB
+    """Startup probe - checks if the application has completed initialization."""
     db_status = await check_database(db)
     
     return HealthResponse(

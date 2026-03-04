@@ -21,6 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # Clean up legacy data that violates the new constraint
+    op.execute("UPDATE responses SET response_value = 3 WHERE response_value IS NULL OR response_value < 1")
     op.execute("UPDATE responses SET response_value = 5 WHERE response_value > 5")
     
     # Add check constraint to enforce 1-5 scale

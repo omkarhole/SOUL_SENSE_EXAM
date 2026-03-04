@@ -3,6 +3,7 @@
 import React from 'react';
 import { JournalEntryCard } from '@/components/journal';
 import { JournalEntry } from '@/types/journal';
+import { toast } from '@/lib/toast';
 
 const MOCK_ENTRIES: JournalEntry[] = [
     {
@@ -36,7 +37,7 @@ const MOCK_ENTRIES: JournalEntry[] = [
 
 export default function JournalDemoPage() {
     const handleClick = (entry: JournalEntry) => {
-        alert(`Clicked entry: ${entry.id}`);
+        toast.info(`Clicked entry: ${entry.id}`);
     };
 
     return (

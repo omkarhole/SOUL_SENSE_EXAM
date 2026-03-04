@@ -4,6 +4,8 @@ from typing import List, Dict, Optional
 from datetime import datetime, UTC
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc
 from fastapi import HTTPException
 
 from ..models import AssessmentResult, User
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class DeepDiveService:
     # -------------------------------------------------------------------------
-    # Hardcoded Question Banks (Ported from QuestionCurator)
+    # Hardcoded Question Banks
     # -------------------------------------------------------------------------
     QUESTION_BANKS = {
         "career_clarity": {
@@ -106,6 +108,7 @@ class DeepDiveService:
         """
         Process a deep dive submission (Async).
         """
+        """Process a deep dive submission."""
         assess_type = submission.assessment_type
         if assess_type not in cls.QUESTION_BANKS:
             raise HTTPException(status_code=404, detail="Invalid assessment type")
@@ -161,12 +164,21 @@ class DeepDiveService:
         
         result = await db.execute(stmt)
         results = result.scalars().all()
+        """Get past deep dive results for the user."""
+        stmt = select(AssessmentResult).filter(
+            AssessmentResult.user_id == user.id,
+            AssessmentResult.is_deleted == False
+        ).order_by(desc(AssessmentResult.id))
+        
+        res = await db.execute(stmt)
+        results = res.scalars().all()
         
         return [
             DeepDiveResultResponse(
                 id=r.id,
                 assessment_type=r.assessment_type,
                 total_score=0,
+                total_score=0, 
                 normalized_score=r.total_score,
                 timestamp=r.timestamp,
                 details=json.loads(r.details) if r.details else {}
@@ -179,6 +191,7 @@ class DeepDiveService:
         """
         Recommend Deep Dives based on EQ stats (Async).
         """
+        """Recommend Deep Dives based on EQ stats."""
         from ..services.user_analytics_service import UserAnalyticsService
         
         stats = await UserAnalyticsService.get_dashboard_summary(db, user.id)

@@ -1,17 +1,17 @@
 """
 Settings Synchronization Service
-
-Provides key-value based settings storage with conflict-safe updates using optimistic locking.
-Implements Issue #396: Create Settings Synchronization API
+Migrated to Async SQLAlchemy 2.0.
 """
 
 from typing import List, Optional, Tuple, Any, Dict
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete, desc
+from datetime import datetime, UTC
 import json
 
-# Import models from models module
 from ..models import UserSyncSetting
 
 
@@ -45,6 +45,7 @@ class SettingsSyncService:
         Returns:
             UserSyncSetting or None if not found
         """
+        """Get a single setting by key for a user."""
         stmt = select(UserSyncSetting).filter(
             UserSyncSetting.user_id == user_id,
             UserSyncSetting.key == key
@@ -62,6 +63,7 @@ class SettingsSyncService:
         Returns:
             List of UserSyncSetting objects
         """
+        """Get all settings for a user."""
         stmt = select(UserSyncSetting).filter(
             UserSyncSetting.user_id == user_id
         ).order_by(UserSyncSetting.key)
@@ -88,30 +90,31 @@ class SettingsSyncService:
             Tuple of (setting, success, error_message)
             - success is False if there's a version conflict
         """
+        """Create or update a setting with optimistic locking."""
         existing = await self.get_setting(user_id, key)
         serialized_value = self._serialize_value(value)
         
+        now_iso = datetime.now(UTC).isoformat()
+        
         if existing:
-            # Check for version conflict
             if expected_version is not None and existing.version != expected_version:
                 return existing, False, f"Version conflict: expected {expected_version}, found {existing.version}"
             
-            # Update existing setting
             existing.value = serialized_value
             existing.version += 1
             existing.updated_at = datetime.utcnow().isoformat()
+            existing.updated_at = now_iso
             await self.db.commit()
             await self.db.refresh(existing)
             return existing, True, None
         else:
-            # Create new setting
             new_setting = UserSyncSetting(
                 user_id=user_id,
                 key=key,
                 value=serialized_value,
                 version=1,
-                created_at=datetime.utcnow().isoformat(),
-                updated_at=datetime.utcnow().isoformat()
+                created_at=now_iso,
+                updated_at=now_iso
             )
             self.db.add(new_setting)
             await self.db.commit()
@@ -129,6 +132,7 @@ class SettingsSyncService:
         Returns:
             True if deleted, False if not found
         """
+        """Delete a setting by key."""
         existing = await self.get_setting(user_id, key)
         if existing:
             await self.db.delete(existing)
@@ -147,6 +151,7 @@ class SettingsSyncService:
         Returns:
             List of UserSyncSetting objects (may be fewer than keys if some don't exist)
         """
+        """Get multiple settings by keys."""
         stmt = select(UserSyncSetting).filter(
             UserSyncSetting.user_id == user_id,
             UserSyncSetting.key.in_(keys)
@@ -169,6 +174,7 @@ class SettingsSyncService:
         Returns:
             Tuple of (successful settings, list of conflicting keys)
         """
+        """Batch upsert settings."""
         successful = []
         conflicts = []
         
@@ -204,6 +210,7 @@ class SettingsSyncService:
         Returns:
             Number of settings deleted
         """
+        """Delete all settings for a user."""
         stmt = delete(UserSyncSetting).filter(
             UserSyncSetting.user_id == user_id
         )

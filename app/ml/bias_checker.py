@@ -3,26 +3,20 @@ Simple Bias Checker for SOUL_SENSE_EXAM
 Checks for age bias in test scores
 """
 
-import sqlite3
 import json
 import os
 from datetime import datetime
-
+from sqlalchemy import text
+from app.db import safe_db_context
 class SimpleBiasChecker:
     def __init__(self, db_path=None):
-        """Initialize the SimpleBiasChecker.
-
-        Args:
-            db_path (str, optional): Legacy db_path parameter. Now uses unified engine.
-        """
-        from app.db import get_engine
-        self.engine = get_engine()
+        """Initialize the SimpleBiasChecker."""
+        pass
     
     def check_age_bias(self):
         """Check for age bias in test scores by comparing averages across age groups."""
-        from sqlalchemy import text
         try:
-            with self.engine.connect() as conn:
+            with safe_db_context() as session:
                 # Get average scores by age group
                 query = text("""
                     SELECT 
@@ -46,7 +40,7 @@ class SimpleBiasChecker:
                     ORDER BY 3 DESC
                 """)
                 
-                result = conn.execute(query)
+                result = session.execute(query)
                 results = result.fetchall()
             
             if len(results) < 2:
@@ -88,9 +82,8 @@ class SimpleBiasChecker:
     
     def check_question_fairness(self):
         """Check if questions have similar average responses across age groups."""
-        from sqlalchemy import text
         try:
-            with self.engine.connect() as conn:
+            with safe_db_context() as session:
                 # Dialect-agnostic date comparison (simplified)
                 query = text("""
                     SELECT 
@@ -110,7 +103,7 @@ class SimpleBiasChecker:
                     ORDER BY 1, 2
                 """)
                 
-                result = conn.execute(query)
+                result = session.execute(query)
                 results = result.fetchall()
             
             # Group by question

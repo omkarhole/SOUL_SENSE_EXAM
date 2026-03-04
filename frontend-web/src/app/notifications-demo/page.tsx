@@ -23,6 +23,9 @@ export default function NotificationsDemoPage() {
       analytics: true,
       data_retention_days: 365,
       profile_visibility: 'private',
+      consent_ml_training: false,
+      consent_aggregated_research: false,
+      crisis_mode_enabled: false,
     },
     accessibility: {
       high_contrast: false,
@@ -33,6 +36,11 @@ export default function NotificationsDemoPage() {
       language: 'en',
       timezone: 'UTC',
       date_format: 'MM/dd/yyyy',
+    },
+    ai_boundaries: {
+      off_limit_topics: [],
+      ai_tone_preference: 'Warm',
+      storage_retention_days: 365,
     },
   });
 

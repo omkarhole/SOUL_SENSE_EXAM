@@ -45,7 +45,7 @@ except ImportError:
 
 from sqlalchemy import and_
 from app.db import safe_db_context
-from app.models import Score
+from app.models import Score, UserSession
 
 # Configure logging
 logging.basicConfig(
@@ -111,7 +111,7 @@ def export_scores(
     try:
         with safe_db_context() as session:
             # Query scores with filters
-            query = session.query(Score)
+            query = session.query(Score, UserSession.user_id).join(UserSession, Score.session_id == UserSession.session_id)
             if filters:
                 query = query.filter(and_(*filters))
             
@@ -129,11 +129,11 @@ def export_scores(
             
             # Convert to DataFrame
             data = []
-            for score in scores:
+            for score, user_id in scores:
                 data.append({
                     'id': score.id,
                     'username': score.username,
-                    'user_id': score.user_id,
+                    'user_id': user_id,
                     'total_score': score.total_score,
                     'sentiment_score': score.sentiment_score,
                     'age': score.age,

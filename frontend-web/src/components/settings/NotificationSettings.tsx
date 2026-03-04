@@ -3,7 +3,7 @@
 import { UserSettings } from '../../lib/api/settings';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui';
 import { Checkbox } from '@/components/ui';
-import { useDebounce } from '@/hooks/useDebounce';
+import { useDebounceCallback } from '@/hooks/useDebounceCallback';
 import { Mail, Smartphone, Clock, Book, Activity, Cpu, BellRing } from 'lucide-react';
 
 interface NotificationSettingsProps {
@@ -12,7 +12,7 @@ interface NotificationSettingsProps {
 }
 
 export function NotificationSettings({ settings, onChange }: NotificationSettingsProps) {
-  const debouncedOnChange = useDebounce(onChange, 500);
+  const debouncedOnChange = useDebounceCallback(onChange, 500);
 
   const handleNotificationChange = (key: 'email' | 'push', value: boolean) => {
     debouncedOnChange({

@@ -10,13 +10,22 @@ Provides authenticated CRUD endpoints for all user profile types:
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+from ..utils.limiter import limiter
+from app.core import NotFoundError
 
 from ..schemas import (
     # User Settings
     UserSettingsCreate,
     UserSettingsUpdate,
     UserSettingsResponse,
+    # Data Consent
+    DataConsentUpdate,
+    DataConsentResponse,
+    # Crisis Settings
+    CrisisSettingsUpdate,
+    CrisisSettingsResponse,
     # Medical Profile
     MedicalProfileCreate,
     MedicalProfileUpdate,
@@ -44,6 +53,7 @@ router = APIRouter(tags=["Profiles"])
 
 async def get_profile_service(db: AsyncSession = Depends(get_db)):
     """Dependency to get ProfileService (Async)."""
+    """Dependency to get ProfileService."""
     return ProfileService(db)
 
 
@@ -52,27 +62,28 @@ async def get_profile_service(db: AsyncSession = Depends(get_db)):
 # ============================================================================
 
 @router.get("/settings", response_model=UserSettingsResponse, summary="Get User Settings")
+@limiter.limit("100/minute")
 async def get_settings(
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     profile_service: Annotated[ProfileService, Depends(get_profile_service)]
 ):
     """
     Get the current user's settings.
-    
-    **Authentication Required**
     """
     settings = await profile_service.get_user_settings(current_user.id)
     if not settings:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User settings not found. Create them first."
+        raise NotFoundError(
+            resource="User settings",
+            details=[{"message": "Create settings first using POST /profiles/settings"}]
         )
     return settings
 
 
 @router.post("/settings", response_model=UserSettingsResponse, status_code=status.HTTP_201_CREATED, summary="Create User Settings")
+@limiter.limit("10/minute")
 async def create_settings(
+    request: Request,
     settings_data: UserSettingsCreate,
     current_user: Annotated[User, Depends(get_current_user)],
     profile_service: Annotated[ProfileService, Depends(get_profile_service)]
@@ -104,9 +115,6 @@ async def update_settings(
 ):
     """
     Update the current user's settings.
-    Only provided fields will be updated.
-    
-    **Authentication Required**
     """
     settings = await profile_service.update_user_settings(
         user_id=current_user.id,
@@ -122,11 +130,87 @@ async def delete_settings(
 ):
     """
     Delete the current user's settings.
-    
-    **Authentication Required**
     """
     await profile_service.delete_user_settings(current_user.id)
     return None
+
+
+# ============================================================================
+# Data Consent Endpoints
+# ============================================================================
+
+@router.get("/consent", response_model=DataConsentResponse, summary="Get Data Consent Settings")
+async def get_consent(
+    current_user: Annotated[User, Depends(get_current_user)],
+    profile_service: Annotated[ProfileService, Depends(get_profile_service)]
+):
+    """
+    Get the current user's data consent settings.
+    """
+    settings = await profile_service.get_user_settings(current_user.id)
+    if not settings:
+        raise NotFoundError(resource="User settings")
+    return DataConsentResponse(
+        consent_ml_training=settings.consent_ml_training,
+        consent_aggregated_research=settings.consent_aggregated_research
+    )
+
+
+@router.patch("/consent", response_model=DataConsentResponse, summary="Update Data Consent Settings")
+async def update_consent(
+    consent_data: DataConsentUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    profile_service: Annotated[ProfileService, Depends(get_profile_service)]
+):
+    """
+    Update the current user's data consent settings.
+    """
+    settings = await profile_service.update_user_settings(
+        user_id=current_user.id,
+        settings_data=consent_data.model_dump(exclude_unset=True)
+    )
+    return DataConsentResponse(
+        consent_ml_training=settings.consent_ml_training,
+        consent_aggregated_research=settings.consent_aggregated_research
+    )
+
+
+# ============================================================================
+# Crisis Settings Endpoints
+# ============================================================================
+
+@router.get("/crisis_settings", response_model=CrisisSettingsResponse, summary="Get Crisis Settings")
+async def get_crisis_settings(
+    current_user: Annotated[User, Depends(get_current_user)],
+    profile_service: Annotated[ProfileService, Depends(get_profile_service)]
+):
+    """
+    Get the current user's crisis settings.
+    """
+    settings = await profile_service.get_user_settings(current_user.id)
+    if not settings:
+        raise NotFoundError(resource="User settings")
+    return CrisisSettingsResponse(
+        crisis_mode_enabled=settings.crisis_mode_enabled
+    )
+
+
+@router.patch("/crisis_settings", response_model=CrisisSettingsResponse, summary="Update Crisis Settings")
+async def update_crisis_settings(
+    crisis_data: CrisisSettingsUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    profile_service: Annotated[ProfileService, Depends(get_profile_service)]
+):
+    """
+    Update the current user's crisis settings.
+    """
+    settings = await profile_service.update_user_settings(
+        user_id=current_user.id,
+        settings_data=crisis_data.model_dump()
+    )
+    return CrisisSettingsResponse(
+        crisis_mode_enabled=settings.crisis_mode_enabled
+    )
 
 
 # ============================================================================
@@ -140,15 +224,12 @@ async def get_medical_profile(
 ):
     """
     Get the current user's medical profile.
-    
-    **Authentication Required**
     """
     profile = await profile_service.get_medical_profile(current_user.id)
     if not profile:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Medical profile not found. Create it first."
+        raise NotFoundError(
+            resource="Medical profile",
+            details=[{"message": "Create medical profile first using POST /profiles/medical"}]
         )
     return profile
 
@@ -190,9 +271,6 @@ async def update_medical_profile(
 ):
     """
     Update the current user's medical profile.
-    Only provided fields will be updated.
-    
-    **Authentication Required**
     """
     profile = await profile_service.update_medical_profile(
         user_id=current_user.id,
@@ -208,8 +286,6 @@ async def delete_medical_profile(
 ):
     """
     Delete the current user's medical profile.
-    
-    **Authentication Required**
     """
     await profile_service.delete_medical_profile(current_user.id)
     return None
@@ -226,15 +302,12 @@ async def get_personal_profile(
 ):
     """
     Get the current user's personal profile.
-    
-    **Authentication Required**
     """
     profile = await profile_service.get_personal_profile(current_user.id)
     if not profile:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Personal profile not found. Create it first."
+        raise NotFoundError(
+            resource="Personal profile",
+            details=[{"message": "Create personal profile first using POST /profiles/personal"}]
         )
     return profile
 
@@ -282,9 +355,6 @@ async def update_personal_profile(
 ):
     """
     Update the current user's personal profile.
-    Only provided fields will be updated.
-    
-    **Authentication Required**
     """
     profile = await profile_service.update_personal_profile(
         user_id=current_user.id,
@@ -300,8 +370,6 @@ async def delete_personal_profile(
 ):
     """
     Delete the current user's personal profile.
-    
-    **Authentication Required**
     """
     await profile_service.delete_personal_profile(current_user.id)
     return None
@@ -318,15 +386,12 @@ async def get_strengths(
 ):
     """
     Get the current user's strengths profile.
-    
-    **Authentication Required**
     """
     strengths = await profile_service.get_user_strengths(current_user.id)
     if not strengths:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User strengths not found. Create them first."
+        raise NotFoundError(
+            resource="User strengths",
+            details=[{"message": "Create strengths first using POST /profiles/strengths"}]
         )
     return strengths
 
@@ -367,9 +432,6 @@ async def update_strengths(
 ):
     """
     Update the current user's strengths profile.
-    Only provided fields will be updated.
-    
-    **Authentication Required**
     """
     strengths = await profile_service.update_user_strengths(
         user_id=current_user.id,
@@ -385,8 +447,6 @@ async def delete_strengths(
 ):
     """
     Delete the current user's strengths profile.
-    
-    **Authentication Required**
     """
     await profile_service.delete_user_strengths(current_user.id)
     return None
@@ -403,15 +463,12 @@ async def get_emotional_patterns(
 ):
     """
     Get the current user's emotional patterns.
-    
-    **Authentication Required**
     """
     patterns = await profile_service.get_emotional_patterns(current_user.id)
     if not patterns:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Emotional patterns not found. Create them first."
+        raise NotFoundError(
+            resource="Emotional patterns",
+            details=[{"message": "Create emotional patterns first using POST /profiles/emotional-patterns"}]
         )
     return patterns
 
@@ -448,9 +505,6 @@ async def update_emotional_patterns(
 ):
     """
     Update the current user's emotional patterns.
-    Only provided fields will be updated.
-    
-    **Authentication Required**
     """
     patterns = await profile_service.update_emotional_patterns(
         user_id=current_user.id,
@@ -466,8 +520,6 @@ async def delete_emotional_patterns(
 ):
     """
     Delete the current user's emotional patterns.
-    
-    **Authentication Required**
     """
     await profile_service.delete_emotional_patterns(current_user.id)
     return None

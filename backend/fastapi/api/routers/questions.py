@@ -1,5 +1,6 @@
 """API router for question endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 import sys
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT_DIR))
 VERSION = "1.0.0"
 
 from ..services.db_service import get_db, QuestionService
+from app.core import NotFoundError, ValidationError
 from ..schemas import (
     QuestionResponse,
     QuestionListResponse,
@@ -33,14 +35,6 @@ async def get_questions(
 ):
     """
     Get a list of questions.
-    
-    - **age**: Optional age filter (returns questions appropriate for this age)
-    - **category_id**: Optional category filter
-    - **limit**: Maximum number of questions to return (max 200)
-    - **skip**: Number of questions to skip for pagination
-    - **active_only**: Whether to return only active questions
-    
-    Returns a paginated question list.
     """
     if age is not None:
         # Get age-appropriate questions
@@ -76,14 +70,12 @@ async def get_questions_by_age(
 ):
     """
     Get questions appropriate for a specific age.
-    
-    - **age**: User's age (10-120)
-    - **limit**: Optional limit on number of questions
-    
-    Returns questions where min_age <= age <= max_age.
     """
     if age < 10 or age > 120:
-        raise HTTPException(status_code=400, detail="Age must be between 10 and 120")
+        raise ValidationError(
+            message="Age must be between 10 and 120",
+            details=[{"field": "age", "error": "Age out of valid range", "value": age}]
+        )
     
     questions = await QuestionService.get_questions_by_age(db=db, age=age, limit=limit)
     
@@ -94,8 +86,6 @@ async def get_questions_by_age(
 async def get_categories(db: AsyncSession = Depends(get_db)):
     """
     Get all question categories.
-    
-    Returns a list of all available question categories.
     """
     categories = await QuestionService.get_categories(db=db)
     
@@ -109,13 +99,11 @@ async def get_category(
 ):
     """
     Get a specific question category.
-    
-    - **category_id**: The ID of the category to retrieve
     """
     category = await QuestionService.get_category_by_id(db=db, category_id=category_id)
     
     if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise NotFoundError(resource="Category", resource_id=str(category_id))
     
     return QuestionCategoryResponse.model_validate(category)
 
@@ -127,12 +115,10 @@ async def get_question(
 ):
     """
     Get a specific question by ID.
-    
-    - **question_id**: The ID of the question to retrieve
     """
     question = await QuestionService.get_question_by_id(db=db, question_id=question_id)
     
     if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+        raise NotFoundError(resource="Question", resource_id=str(question_id))
     
     return QuestionResponse.model_validate(question)

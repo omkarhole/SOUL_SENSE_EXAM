@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, UTC
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+from sqlalchemy import select, delete
 from ..models import OTP, User
 from typing import Optional
 
@@ -29,6 +30,7 @@ class OTPManager:
     async def generate_otp(cls, user_id: int, purpose: str, db_session: AsyncSession) -> tuple[Optional[str], Optional[str]]:
         """
         Generate a new OTP for a user (Async).
+        Generate a new OTP for a user.
         """
         try:
             # 1. Rate Limiting Check
@@ -36,6 +38,7 @@ class OTPManager:
                 OTP.user_id == user_id,
                 OTP.type == purpose
             ).order_by(desc(OTP.created_at)).limit(1)
+            ).order_by(OTP.created_at.desc())
             
             result = await db_session.execute(stmt)
             last_otp = result.scalar_one_or_none()
@@ -47,6 +50,12 @@ class OTPManager:
                     created_at = created_at.replace(tzinfo=UTC)
                     
                 time_since = datetime.now(UTC) - created_at
+                # Ensure created_at has timezone
+                last_created = last_otp.created_at
+                if last_created.tzinfo is None:
+                    last_created = last_created.replace(tzinfo=UTC)
+                    
+                time_since = datetime.now(UTC) - last_created
                 if time_since.total_seconds() < cls.RATE_LIMIT_SECONDS:
                     wait_time = cls.RATE_LIMIT_SECONDS - int(time_since.total_seconds())
                     return None, f"Please wait {wait_time}s before requesting a new code."
@@ -82,6 +91,7 @@ class OTPManager:
     async def verify_otp(cls, user_id: int, code: str, purpose: str, db_session: AsyncSession) -> tuple[bool, str]:
         """
         Verify an OTP code (Async).
+        Verify an OTP code.
         """
         try:
             input_hash = cls._hash_code(code)
@@ -93,6 +103,7 @@ class OTPManager:
                 OTP.is_used == False,
                 OTP.expires_at > datetime.now(UTC)
             ).order_by(desc(OTP.created_at)).limit(1)
+            ).order_by(OTP.created_at.desc())
             
             result = await db_session.execute(stmt)
             otp = result.scalar_one_or_none()
@@ -132,4 +143,5 @@ class OTPManager:
         except Exception as e:
             await db_session.rollback()
             logger.error(f"Error validating OTP: {e}")
+            return False, "Verification failed due to an error."
             return False, "Verification failed due to an error."

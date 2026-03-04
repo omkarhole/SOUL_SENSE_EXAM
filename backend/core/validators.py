@@ -7,25 +7,63 @@ with support for different environments and type checking.
 
 import os
 import re
+import logging
 from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import urlparse
 from pathlib import Path
+from abc import ABC, abstractmethod
 
 from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("environment_validator")
 
 # Load environment variables from .env file
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_FILE = ROOT_DIR / ".env"
 load_dotenv(ENV_FILE)
 
+# Constants for secret validation
+SENSITIVE_KEYWORDS = {
+    'secret', 'key', 'token', 'password', 'credential', 'auth', 'private', 
+    'access_id', 'client_id', 'client_secret', 'api_key', 'api_token', 'dsn',
+    'connection_string', 'pwd'
+}
+
+SAFE_DEV_PREFIXES = ('dev_', 'test_', 'dummy_', 'mock_', 'local_')
+
+
+class SecretManager(ABC):
+    """Abstract interface for secret management tools (Vault, AWS Secrets Manager, etc.)"""
+    
+    @abstractmethod
+    def get_secret(self, key: str) -> Optional[str]:
+        """Retrieve a secret from the manager."""
+        pass
+
+
+class MockSecretManager(SecretManager):
+    """Mock implementation of SecretManager for development."""
+    
+    def get_secret(self, key: str) -> Optional[str]:
+        # In a real implementation, this would connect to a service
+        return os.getenv(f"VAULT_{key}")
+
 
 class EnvironmentValidator:
     """Validator for environment variables with type checking and validation."""
 
-    def __init__(self, env: str = "development"):
-        self.env = env
+    def __init__(self, env: str = "development", secret_manager: Optional[SecretManager] = None):
+        self.env = env.lower()
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        self.secret_manager = secret_manager or MockSecretManager()
+
+    def is_sensitive_key(self, key: str) -> bool:
+        """Check if a key name suggests it contains sensitive information."""
+        key_lower = key.lower()
+        return any(keyword in key_lower for keyword in SENSITIVE_KEYWORDS)
 
     def validate_required_string(self, key: str, value: Optional[str]) -> bool:
         """Validate required string variable."""
@@ -94,11 +132,33 @@ class EnvironmentValidator:
         return value
 
     def check_secret_exposure(self, key: str, value: str) -> None:
-        """Check if sensitive variables are exposed in development."""
-        sensitive_keywords = ['secret', 'key', 'token', 'password', 'credential']
-        if self.env == "development" and any(keyword in key.lower() for keyword in sensitive_keywords):
-            if value and not value.startswith(('dev_', 'test_', 'dummy_')):
-                self.warnings.append(f"Potential secret exposure in development: '{key}'")
+        """
+        Check if sensitive variables are exposed in development.
+        Enforces strict naming conventions for secrets.
+        """
+        if self.is_sensitive_key(key):
+            # In development/testing, secrets MUST have a safe prefix to avoid accidental prod leak
+            if self.env in ("development", "testing"):
+                if value and not value.startswith(SAFE_DEV_PREFIXES):
+                    msg = (f"Security Risk: Potential real secret detected in '{self.env}' for key '{key}'. "
+                          f"Secrets in development must start with one of {SAFE_DEV_PREFIXES}")
+                    self.errors.append(msg)
+                    logger.error(msg)
+            
+            # Check if secret should be managed by SecretManager
+            managed_secret = self.secret_manager.get_secret(key)
+            if managed_secret and value != managed_secret:
+                self.warnings.append(f"Secret '{key}' differs from value in SecretManager (Vault/Cloud)")
+
+    def get_masked_value(self, key: str, value: Any) -> str:
+        """Get masked version of sensitive values for logging."""
+        if not self.is_sensitive_key(key) or value is None:
+            return str(value)
+        
+        str_val = str(value)
+        if len(str_val) <= 8:
+            return "*" * len(str_val)
+        return f"{str_val[:4]}...{str_val[-4:]}"
 
     def validate_environment_variables(self, required_vars: Dict[str, Any],
                                      optional_vars: Dict[str, Any]) -> Dict[str, Any]:
@@ -126,6 +186,7 @@ class EnvironmentValidator:
                 url_val = self.validate_url(key, value)
                 if url_val:
                     validated[key] = url_val
+                    self.check_secret_exposure(key, value) # URLs can contain secrets/keys
             elif var_type == 'email':
                 email_val = self.validate_email(key, value)
                 if email_val:
@@ -138,7 +199,10 @@ class EnvironmentValidator:
             value = os.getenv(key)
 
             if var_type == 'string':
-                validated[key] = self.validate_optional_string(key, value, default)
+                val = self.validate_optional_string(key, value, default)
+                validated[key] = val
+                if value: # Only check if explicitly provided, not the default
+                    self.check_secret_exposure(key, val)
             elif var_type == 'int':
                 int_val = self.validate_integer(key, value, config.get('min'), config.get('max'))
                 validated[key] = int_val if int_val is not None else config.get('default', 0)
@@ -162,20 +226,17 @@ class EnvironmentValidator:
 def validate_environment_on_startup(env: str = "development") -> Dict[str, Any]:
     """
     Validate environment variables on application startup.
-
-    Args:
-        env: Environment name (development, staging, production)
-
-    Returns:
-        Dict containing validation results and validated variables
-
-    Raises:
-        SystemExit: If validation fails
     """
     validator = EnvironmentValidator(env)
 
-    # Define required variables based on environment
-    # Define variables
+    # Define common variables
+    common_optional = {
+        'HOST': {'type': 'string', 'default': '127.0.0.1'},
+        'PORT': {'type': 'int', 'default': 8000, 'min': 1, 'max': 65535},
+        'JWT_ALGORITHM': {'type': 'string', 'default': 'HS256'},
+        'JWT_EXPIRATION_HOURS': {'type': 'int', 'default': 24, 'min': 1},
+    }
+
     if env in ['staging', 'production']:
         required_vars = {
             'APP_ENV': {'type': 'string'},
@@ -188,25 +249,19 @@ def validate_environment_on_startup(env: str = "development") -> Dict[str, Any]:
             'DATABASE_PASSWORD': {'type': 'string'},
         }
         optional_vars = {
-            'HOST': {'type': 'string', 'default': '127.0.0.1'},
-            'PORT': {'type': 'int', 'default': 8000, 'min': 1, 'max': 65535},
+            **common_optional,
             'DEBUG': {'type': 'bool', 'default': False},
-            'JWT_ALGORITHM': {'type': 'string', 'default': 'HS256'},
-            'JWT_EXPIRATION_HOURS': {'type': 'int', 'default': 24, 'min': 1},
         }
     else:
-        # Development defaults (relaxed validation)
+        # Development/Testing defaults
         required_vars = {} 
         optional_vars = {
-            'APP_ENV': {'type': 'string', 'default': 'development'},
+            **common_optional,
+            'APP_ENV': {'type': 'string', 'default': env},
             'DATABASE_URL': {'type': 'string', 'default': 'sqlite:///../../data/soulsense.db'},
-            'JWT_SECRET_KEY': {'type': 'string', 'default': 'dev_jwt_secret'},
-            'HOST': {'type': 'string', 'default': '127.0.0.1'},
-            'PORT': {'type': 'int', 'default': 8000, 'min': 1, 'max': 65535},
+            'JWT_SECRET_KEY': {'type': 'string', 'default': 'dev_jwt_secret_must_be_long_enough_32_chars'},
             'DEBUG': {'type': 'bool', 'default': True},
-            'JWT_ALGORITHM': {'type': 'string', 'default': 'HS256'},
-            'JWT_EXPIRATION_HOURS': {'type': 'int', 'default': 24, 'min': 1},
-            'WELCOME_MESSAGE': {'type': 'string', 'default': 'Welcome to Soul Sense!'},
+            'WELCOME_MESSAGE': {'type': 'string', 'default': 'Welcome to Soul Sense (Dev Mode)!'},
         }
 
     validated_vars = validator.validate_environment_variables(required_vars, optional_vars)
@@ -218,28 +273,30 @@ def validate_environment_on_startup(env: str = "development") -> Dict[str, Any]:
     }
 
 
-def log_environment_summary(validated_vars: Dict[str, Any], summary: Dict[str, Any]) -> None:
-    """Log environment validation summary."""
-    print("Environment Validation Summary:")
-    print(f"   [OK] Valid: {summary['valid']}")
-    print(f"   [ERR] Errors: {summary['error_count']}")
-    print(f"   [WARN] Warnings: {summary['warning_count']}")
+def log_environment_summary(validated_vars: Dict[str, Any], summary: Dict[str, Any], env: str = "development") -> None:
+    """Log environment validation summary with masking."""
+    validator = EnvironmentValidator(env)
+    
+    print("\n" + "="*50)
+    print("ENVIRONMENT VALIDATION SUMMARY")
+    print("="*50)
+    print(f"Status:   {'[PASSED]' if summary['valid'] else '[FAILED]'}")
+    print(f"Errors:   {summary['error_count']}")
+    print(f"Warnings: {summary['warning_count']}")
+    print("-"*50)
 
     if summary['errors']:
-        print("\n[ERR] Validation Errors:")
+        print("\n[ERRORS]:")
         for error in summary['errors']:
-            print(f"   - {error}")
+            print(f" ! {error}")
 
     if summary['warnings']:
-        print("\n[WARN] Validation Warnings:")
+        print("\n[WARNINGS]:")
         for warning in summary['warnings']:
-            print(f"   - {warning}")
+            print(f" * {warning}")
 
-    # Log non-sensitive variables
-    print("\nEnvironment Configuration (non-sensitive):")
-    sensitive_keys = {'JWT_SECRET_KEY', 'DATABASE_PASSWORD', 'SECRET_KEY'}
+    print("\nCONFIGURATION (Masked):")
     for key, value in validated_vars.items():
-        if key not in sensitive_keys:
-            print(f"   {key}: {value}")
-        else:
-            print(f"   {key}: [REDACTED]")
+        masked = validator.get_masked_value(key, value)
+        print(f" - {key}: {masked}")
+    print("="*50 + "\n")

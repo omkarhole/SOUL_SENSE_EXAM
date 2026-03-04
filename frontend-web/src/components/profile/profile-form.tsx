@@ -23,6 +23,68 @@ import {
 } from '@/components/ui';
 import { FormField } from '@/components/forms';
 import { cn } from '@/lib/utils';
+import { UserProfile } from '@/lib/api/profile';
+
+// TagInput Component
+function TagInput({ value = [], onChange, placeholder, ...props }: {
+  value?: string[];
+  onChange?: (value: string[]) => void;
+  placeholder?: string;
+  [key: string]: any;
+}) {
+  const [inputValue, setInputValue] = useState('');
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && inputValue.trim()) {
+      e.preventDefault();
+      const newValue = [...(value || []), inputValue.trim()];
+      onChange?.(newValue);
+      setInputValue('');
+    } else if (e.key === 'Backspace' && !inputValue && value?.length) {
+      const newValue = value.slice(0, -1);
+      onChange?.(newValue);
+    }
+  };
+
+  const removeTag = (index: number) => {
+    const newValue = value?.filter((_, i) => i !== index) || [];
+    onChange?.(newValue);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2 min-h-[2.5rem] p-2 border border-input rounded-md bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+        {value?.map((tag, index) => (
+          <span
+            key={index}
+            className="inline-flex items-center gap-1 px-2 py-1 text-sm bg-primary/10 text-primary rounded-md"
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => removeTag(index)}
+              className="hover:text-destructive"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={value?.length ? '' : placeholder}
+          className="flex-1 min-w-[120px] bg-transparent outline-none text-sm"
+          {...props}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Press Enter to add a tag, Backspace to remove the last tag
+      </p>
+    </div>
+  );
+}
 
 // Zod Schema for validation
 const profileSchema = z.object({
@@ -34,12 +96,20 @@ const profileSchema = z.object({
   shortTermGoals: z.string().optional(),
   longTermGoals: z.string().optional(),
   avatarUrl: z.string().optional(),
+  sleepHours: z.coerce.number().min(0, 'Sleep hours must be at least 0').max(24, 'Sleep hours must be at most 24').optional(),
+  exerciseFrequency: z.enum(['none', 'light', 'moderate', 'heavy']).optional(),
+  dietType: z.string().optional(),
+  hasTherapist: z.boolean().optional(),
+  supportNetworkSize: z.coerce.number().min(0, 'Network size must be at least 0').max(100, 'Network size must be at most 100').optional(),
+  primarySupportType: z.enum(['family', 'friends', 'professional', 'none']).optional(),
+  primaryGoal: z.string().max(500, 'Primary goal must be less than 500 characters').optional(),
+  focusAreas: z.array(z.string()).optional(),
 });
 
 export type ProfileFormValues = z.infer<typeof profileSchema>;
 
 interface ProfileFormProps {
-  profile?: Partial<ProfileFormValues>;
+  profile?: Partial<UserProfile>;
   onSubmit: (data: ProfileFormValues & { avatarFile?: File }) => void;
   onCancel?: () => void;
   isSubmitting?: boolean;
@@ -56,20 +126,28 @@ interface ProfileFormProps {
  * - Character count for bio
  */
 export function ProfileForm({ profile, onSubmit, onCancel, isSubmitting }: ProfileFormProps) {
-  const [avatarPreview, setAvatarPreview] = useState<string | null>(profile?.avatarUrl || null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(profile?.avatar_path || null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
-      firstName: profile?.firstName || '',
-      lastName: profile?.lastName || '',
+      firstName: profile?.first_name || '',
+      lastName: profile?.last_name || '',
       bio: profile?.bio || '',
       age: profile?.age || 18,
-      gender: profile?.gender || 'prefer_not_to_say',
-      shortTermGoals: profile?.shortTermGoals || '',
-      longTermGoals: profile?.longTermGoals || '',
+      gender: (profile?.gender as 'male' | 'female' | 'other' | 'prefer_not_to_say') || 'prefer_not_to_say',
+      shortTermGoals: profile?.goals?.short_term || '',
+      longTermGoals: profile?.goals?.long_term || '',
+      sleepHours: profile?.sleep_hours,
+      exerciseFrequency: profile?.exercise_freq as 'none' | 'light' | 'moderate' | 'heavy',
+      dietType: profile?.dietary_patterns || '',
+      hasTherapist: profile?.has_therapist,
+      supportNetworkSize: profile?.support_network_size,
+      primarySupportType: profile?.primary_support_type as 'family' | 'friends' | 'professional' | 'none',
+      primaryGoal: profile?.primary_goal || '',
+      focusAreas: profile?.focus_areas || [],
     },
   });
 
@@ -232,6 +310,132 @@ export function ProfileForm({ profile, onSubmit, onCancel, isSubmitting }: Profi
                 </FormField>
               </div>
             </div>
+
+            <div className="space-y-6 pt-6 border-t border-border/50">
+              <h3 className="text-lg font-semibold flex items-center text-foreground/80">
+                <ChevronRight className="h-5 w-5 mr-1 text-primary" />
+                Lifestyle & Habits
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField
+                  control={form.control}
+                  name="sleepHours"
+                  label="Average Sleep Hours per Night"
+                  type="number"
+                  step="0.5"
+                  placeholder="7.5"
+                />
+                <FormField control={form.control} name="exerciseFrequency" label="Exercise Frequency" required>
+                  {(field) => (
+                    <Select {...field}>
+                      <option value="">Select frequency</option>
+                      <option value="none">None</option>
+                      <option value="light">Light (1-2 times/week)</option>
+                      <option value="moderate">Moderate (3-4 times/week)</option>
+                      <option value="heavy">Heavy (5+ times/week)</option>
+                    </Select>
+                  )}
+                </FormField>
+              </div>
+
+              <FormField
+                control={form.control}
+                name="dietType"
+                label="Diet Type"
+                placeholder="E.g. Mediterranean, Vegetarian, Keto..."
+              />
+            </div>
+
+            <div className="space-y-6 pt-6 border-t border-border/50">
+              <h3 className="text-lg font-semibold flex items-center text-foreground/80">
+                <ChevronRight className="h-5 w-5 mr-1 text-primary" />
+                Support System
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField control={form.control} name="hasTherapist" label="Has Therapist">
+                  {(field) => (
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="hasTherapist"
+                        {...field}
+                        checked={field.value || false}
+                        className="rounded border-border/40"
+                      />
+                      <label htmlFor="hasTherapist" className="text-sm font-medium">
+                        I have access to a therapist
+                      </label>
+                    </div>
+                  )}
+                </FormField>
+                <FormField
+                  control={form.control}
+                  name="supportNetworkSize"
+                  label="Support Network Size"
+                  type="number"
+                  placeholder="0"
+                />
+              </div>
+
+              <FormField control={form.control} name="primarySupportType" label="Primary Support Type">
+                {(field) => (
+                  <Select {...field}>
+                    <option value="">Select support type</option>
+                    <option value="family">Family</option>
+                    <option value="friends">Friends</option>
+                    <option value="professional">Professional</option>
+                    <option value="none">None</option>
+                  </Select>
+                )}
+              </FormField>
+            </div>
+
+            <div className="space-y-6 pt-6 border-t border-border/50">
+              <h3 className="text-lg font-semibold flex items-center text-foreground/80">
+                <ChevronRight className="h-5 w-5 mr-1 text-primary" />
+                Goals & Vision
+              </h3>
+
+              <FormField
+                control={form.control}
+                name="primaryGoal"
+                label="Primary Goal"
+                placeholder="What is your main objective or vision for personal growth?"
+              >
+                {(field) => (
+                  <div className="relative">
+                    <Textarea
+                      {...field}
+                      rows={4}
+                      className="resize-none pr-12 focus:ring-primary/30"
+                      maxLength={500}
+                    />
+                    <span
+                      className={cn(
+                        'absolute bottom-2 right-2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-background/50 backdrop-blur-sm border border-border/50',
+                        (field.value?.length || 0) > 450
+                          ? 'text-destructive font-bold'
+                          : 'text-muted-foreground'
+                      )}
+                    >
+                      {field.value?.length || 0}/500
+                    </span>
+                  </div>
+                )}
+              </FormField>
+
+              <FormField
+                control={form.control}
+                name="focusAreas"
+                label="Focus Areas"
+                placeholder="Add areas you want to focus on (press Enter to add)"
+              >
+                {(field) => <TagInput {...field} />}
+              </FormField>
+            </div>
+
           </CardContent>
 
           <CardFooter className="pt-6 pb-8 flex justify-end gap-3 bg-muted/10 border-t border-border/50">

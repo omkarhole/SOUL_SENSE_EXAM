@@ -11,7 +11,7 @@ export interface PersonalProfile {
   occupation?: string;
   education_level?: string;
   bio?: string;
-  avatar_url?: string;
+  avatar_path?: string;
   member_since?: string;
   eq_stats?: {
     last_score?: number;
@@ -56,7 +56,7 @@ export interface UserProfile {
   bio: string;
   age: number;
   gender: string;
-  avatar_url: string;
+  avatar_path: string;
   goals: {
     short_term: string;
     long_term: string;
@@ -67,6 +67,15 @@ export interface UserProfile {
   };
   created_at: string;
   updated_at: string;
+  sleep_hours?: number;
+  exercise_freq?: string;
+  dietary_patterns?: string;
+  has_therapist?: boolean;
+  support_network_size?: number;
+  primary_support_type?: string;
+  primary_goal?: string;
+  focus_areas?: string[];
+  onboarding_completed?: boolean;
 }
 
 export interface UpdateUserProfile {
@@ -83,6 +92,43 @@ export interface UpdateUserProfile {
     notification_frequency?: string;
     theme?: string;
   };
+  sleep_hours?: number;
+  exercise_freq?: string;
+  dietary_patterns?: string;
+  has_therapist?: boolean;
+  support_network_size?: number;
+  primary_support_type?: string;
+  primary_goal?: string;
+  focus_areas?: string[];
+}
+
+// ============================================================================
+// Onboarding Types (Issue #933)
+// ============================================================================
+
+export interface OnboardingData {
+  /** Step 1: Welcome & Vision */
+  primary_goal?: string;
+  focus_areas?: string[];
+  
+  /** Step 2: Current Lifestyle */
+  sleep_hours?: number;
+  exercise_freq?: string;
+  dietary_patterns?: string;
+  
+  /** Step 3: Support System */
+  has_therapist?: boolean;
+  support_network_size?: number;
+  primary_support_type?: string;
+}
+
+export interface OnboardingStatus {
+  onboarding_completed: boolean;
+}
+
+export interface OnboardingCompleteResponse {
+  message: string;
+  onboarding_completed: boolean;
 }
 
 export const profileApi = {
@@ -155,7 +201,7 @@ export const profileApi = {
         bio: data.personal_profile?.bio || '',
         age: data.personal_profile?.age || 0,
         gender: data.personal_profile?.gender || '',
-        avatar_url: data.personal_profile?.avatar_path || '',
+        avatar_path: data.personal_profile?.avatar_path || '',
         goals: {
           short_term: data.strengths?.short_term_goals || '',
           long_term: data.strengths?.long_term_vision || '',
@@ -166,6 +212,14 @@ export const profileApi = {
         },
         created_at: data.user.created_at,
         updated_at: data.personal_profile?.last_updated || data.user.created_at,
+        sleep_hours: data.personal_profile?.sleep_hours,
+        exercise_freq: data.personal_profile?.exercise_freq,
+        dietary_patterns: data.personal_profile?.dietary_patterns,
+        has_therapist: data.personal_profile?.has_therapist,
+        support_network_size: data.personal_profile?.support_network_size,
+        primary_support_type: data.personal_profile?.primary_support_type,
+        primary_goal: data.strengths?.primary_goal,
+        focus_areas: data.strengths?.focus_areas,
       };
     });
   },
@@ -180,17 +234,31 @@ export const profileApi = {
         bio: data.bio,
         age: data.age,
         gender: data.gender,
+        sleep_hours: data.sleep_hours,
+        exercise_freq: data.exercise_freq,
+        dietary_patterns: data.dietary_patterns,
+        has_therapist: data.has_therapist,
+        support_network_size: data.support_network_size,
+        primary_support_type: data.primary_support_type,
       }),
     });
 
     // 2. Update strengths
+    const strengthsData: Record<string, any> = {};
     if (data.goals) {
+      strengthsData.short_term_goals = data.goals.short_term;
+      strengthsData.long_term_vision = data.goals.long_term;
+    }
+    if (data.primary_goal !== undefined) {
+      strengthsData.primary_goal = data.primary_goal;
+    }
+    if (data.focus_areas !== undefined) {
+      strengthsData.focus_areas = data.focus_areas;
+    }
+    if (Object.keys(strengthsData).length > 0) {
       await apiClient('/profiles/strengths', {
         method: 'PUT',
-        body: JSON.stringify({
-          short_term_goals: data.goals.short_term,
-          long_term_vision: data.goals.long_term,
-        }),
+        body: JSON.stringify(strengthsData),
       });
     }
 
@@ -211,11 +279,11 @@ export const profileApi = {
     return this.getUserProfile();
   },
 
-  async uploadAvatar(file: File): Promise<{ avatar_url: string }> {
+  async uploadAvatar(file: File): Promise<{ avatar_path: string }> {
     const formData = new FormData();
-    formData.append('avatar', file);
+    formData.append('file', file);
 
-    return apiClient('/profiles/me/avatar', {
+    return apiClient('/users/me/avatar', {
       method: 'POST',
       body: formData,
     });
@@ -224,6 +292,21 @@ export const profileApi = {
   async deleteAvatar(): Promise<void> {
     return apiClient('/profiles/me/avatar', {
       method: 'DELETE',
+    });
+  },
+
+  // ========================================================================
+  // Onboarding API (Issue #933)
+  // ========================================================================
+
+  async getOnboardingStatus(): Promise<OnboardingStatus> {
+    return apiClient<OnboardingStatus>('/users/me/onboarding/status');
+  },
+
+  async completeOnboarding(data: OnboardingData): Promise<OnboardingCompleteResponse> {
+    return apiClient<OnboardingCompleteResponse>('/users/me/onboarding/complete', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   },
 };
