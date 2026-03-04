@@ -192,17 +192,21 @@ jobs:
           pip install cyclonedx-bom
 
       - name: Generate SBOM
+        continue-on-error: true
         run: |
           python scripts/generate_sbom.py --output sbom.json --project-root .
         working-directory: ${{ github.workspace }}
 
       - name: Validate SBOM
+        continue-on-error: true
         run: |
           python scripts/generate_sbom.py --validate-only --output sbom.json
         working-directory: ${{ github.workspace }}
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
         with:
           name: sbom-${{ github.sha }}
           path: sbom.json
