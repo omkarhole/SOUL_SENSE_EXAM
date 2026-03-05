@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, Query, Response, Request
+from fastapi import APIRouter, Depends, Query, Response, Request, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -221,12 +221,14 @@ async def health_check(
     redis_status = await check_redis(request)
     event_loop_status = await check_event_loop_health(request)
     clock_skew_status = await check_clock_skew(request)
+    fd_guardrails_status = await check_fd_guardrails(request)
 
     services = {
         "database": db_status,
         "redis": redis_status,
         "event_loop": event_loop_status,
-        "clock_skew": clock_skew_status
+        "clock_skew": clock_skew_status,
+        "fd_guardrails": fd_guardrails_status
     }
 
     # Determine overall health - all critical services must be healthy
@@ -247,6 +249,7 @@ async def health_check(
 
 @router.get("/ready", response_model=HealthResponse, tags=["Health"])
 async def readiness_check(
+    request: Request,
     response: Response,
     full: bool = Query(False, description="Include detailed diagnostics"),
     db: AsyncSession = Depends(get_db)
@@ -258,8 +261,9 @@ async def readiness_check(
     
     # Perform health checks
     db_status = await check_database(db)
+    fd_guardrails_status = await check_fd_guardrails(request)
     
-    services = {"database": db_status}
+    services = {"database": db_status, "fd_guardrails": fd_guardrails_status}
     is_healthy = all(s.status == "healthy" for s in services.values())
     
     result = {
@@ -300,3 +304,158 @@ async def startup_check(db: AsyncSession = Depends(get_db)) -> HealthResponse:
         services={"database": db_status},
         details=None
     )
+
+
+# --- FD Guardrail Endpoints (Issue #1316) ---
+
+async def check_fd_guardrails(request) -> ServiceStatus:
+    """Check Linux FD guardrail status."""
+    try:
+        from ..utils.linux_fd_guardrails import get_fd_guardrails
+        guardrails = get_fd_guardrails()
+        status = guardrails.get_status()
+        
+        state = status['state']
+        usage_percent = status['usage_percent']
+        
+        if state == 'critical':
+            return ServiceStatus(
+                status="unhealthy",
+                message=f"Critical FD usage: {usage_percent:.1f}% ({status['current_fds']}/{status['max_fds']})",
+                latency_ms=None
+            )
+        elif state in ('degraded', 'warning'):
+            return ServiceStatus(
+                status="degraded",
+                message=f"Elevated FD usage: {usage_percent:.1f}% ({status['current_fds']}/{status['max_fds']})",
+                latency_ms=None
+            )
+        else:
+            return ServiceStatus(
+                status="healthy",
+                message=f"FD usage normal: {usage_percent:.1f}% ({status['current_fds']}/{status['max_fds']})",
+                latency_ms=None
+            )
+    except Exception as e:
+        logger.warning(f"FD guardrails check failed: {e}")
+        return ServiceStatus(
+            status="unhealthy",
+            message=f"FD guardrails unavailable: {str(e)}",
+            latency_ms=None
+        )
+
+
+@router.get("/fd-status", tags=["Health", "FD Guardrails"])
+async def fd_guardrail_status() -> Dict[str, Any]:
+    """
+    Get detailed FD guardrail status.
+    
+    Returns current FD usage, thresholds, and request handling statistics.
+    """
+    try:
+        from ..utils.linux_fd_guardrails import get_fd_guardrails
+        guardrails = get_fd_guardrails()
+        return guardrails.get_status()
+    except Exception as e:
+        logger.error(f"Error getting FD guardrail status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not retrieve FD guardrail status: {str(e)}"
+        )
+
+
+@router.get("/fd-metrics", tags=["Health", "FD Guardrails"])
+async def fd_guardrail_metrics(
+    count: int = Query(100, ge=1, le=1000, description="Number of metrics samples to return")
+) -> Dict[str, Any]:
+    """
+    Get FD guardrail metrics history.
+    
+    Returns historical metrics for trend analysis and monitoring.
+    """
+    try:
+        from ..utils.linux_fd_guardrails import get_fd_guardrails
+        guardrails = get_fd_guardrails()
+        
+        metrics = guardrails.get_metrics(count)
+        trend = guardrails.get_fd_usage_trend()
+        
+        return {
+            "metrics": [
+                {
+                    "timestamp": m.timestamp,
+                    "current_fds": m.current_fds,
+                    "max_fds": m.max_fds,
+                    "usage_percent": m.usage_percent,
+                    "state": m.state.value,
+                    "requests_accepted": m.requests_accepted,
+                    "requests_rejected": m.requests_rejected,
+                    "cleanups_performed": m.cleanups_performed,
+                    "fds_reclaimed": m.fds_reclaimed
+                }
+                for m in metrics
+            ],
+            "trend_fds_per_minute": trend,
+            "current_status": guardrails.get_status()
+        }
+    except Exception as e:
+        logger.error(f"Error getting FD guardrail metrics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not retrieve FD guardrail metrics: {str(e)}"
+        )
+
+
+@router.post("/fd-cleanup", tags=["Health", "FD Guardrails"])
+async def trigger_fd_cleanup(
+    request: Request,
+    force: bool = Query(False, description="Force cleanup even if not in critical state")
+) -> Dict[str, Any]:
+    """
+    Trigger manual FD cleanup.
+    
+    Requires admin privileges. Attempts to reclaim leaked file descriptors.
+    """
+    # Check for admin authorization
+    # This is a simple check - in production, use proper RBAC
+    api_key = request.headers.get("X-Admin-Key")
+    settings = get_settings()
+    admin_key = getattr(settings, 'admin_api_key', None)
+    
+    if admin_key and api_key != admin_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin authorization required"
+        )
+    
+    try:
+        from ..utils.linux_fd_guardrails import get_fd_guardrails
+        guardrails = get_fd_guardrails()
+        
+        status = guardrails.get_status()
+        
+        # Only allow cleanup if in elevated state or force flag is set
+        if not force and status['state'] not in ('warning', 'degraded', 'critical'):
+            return {
+                "success": False,
+                "message": "Cleanup not needed - FD usage is normal. Use force=true to override.",
+                "status": status
+            }
+        
+        reclaimed = guardrails.force_cleanup()
+        
+        # Get updated status
+        new_status = guardrails.get_status()
+        
+        return {
+            "success": True,
+            "fds_reclaimed": reclaimed,
+            "previous_status": status,
+            "current_status": new_status
+        }
+    except Exception as e:
+        logger.error(f"Error during FD cleanup: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cleanup failed: {str(e)}"
+        )
