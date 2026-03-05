@@ -854,7 +854,7 @@ class Goal(Base):
     journal_entry_id = Column(Integer, ForeignKey('journal_entries.id'), nullable=True, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
-    user = relationship("User", back_populates="assessment_results")
+    
     __table_args__ = (
         Index('idx_goals_user_status', 'user_id', 'status'),
         Index('idx_goals_category', 'category'),
@@ -1385,6 +1385,73 @@ class BackgroundJob(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+# ============================================================================
+# Dead-Letter Queue Models (Issue #1355)
+# ============================================================================
+
+class DeadLetterQueue(Base):
+    """
+    Store failed async tasks for monitoring, replay, and manual recovery.
+    
+    When a Celery task exceeds max_retries, it's moved to DLQ for:
+    - Visibility: Track permanent failures
+    - Manual replay: Requeue transient failures
+    - Discard: Remove business logic errors
+    - Alerting: Monitor DLQ growth as system health indicator
+    """
+    __tablename__ = 'dead_letter_queue'
+    __table_args__ = (
+        Index('idx_dlq_task_name', 'task_name'),
+        Index('idx_dlq_user_id', 'user_id'),
+        Index('idx_dlq_status', 'status'),
+        Index('idx_dlq_created_at', 'created_at'),
+        Index('idx_dlq_queued_at', 'queued_at'),
+    )
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(36), unique=True, nullable=False, index=True)  # Original Celery task ID
+    task_name = Column(String(255), nullable=False)  # e.g., "api.celery_tasks.generate_journal_embedding_task"
+    task_type = Column(String(50), nullable=False)  # e.g., "export_pdf", "send_email"
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)  # NULL for system tasks
+    
+    # Task execution details
+    params = Column(Text, nullable=True)  # JSON string of original task parameters
+    result = Column(Text, nullable=True)  # JSON string of last execution result
+    error_message = Column(Text, nullable=True)  # Full error traceback
+    error_count = Column(Integer, default=1, nullable=False)  # How many times this task failed
+    
+    # Timing information
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False, index=True)  # When task first failed
+    queued_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)  # When moved to DLQ
+    last_retry_at = Column(DateTime, nullable=True)  # When last attempted to replay
+    
+    # DLQ state management
+    status = Column(String(20), default='pending_replay', nullable=False)  # pending_replay, archived, discarded
+    replay_count = Column(Integer, default=0, nullable=False)  # How many manual replays attempted
+    
+    user = relationship("User", foreign_keys=[user_id])
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        import json
+        return {
+            "id": self.id,
+            "task_id": self.task_id,
+            "task_name": self.task_name,
+            "task_type": self.task_type,
+            "user_id": self.user_id,
+            "params": json.loads(self.params) if self.params else None,
+            "result": json.loads(self.result) if self.result else None,
+            "error_message": self.error_message,
+            "error_count": self.error_count,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "queued_at": self.queued_at.isoformat() if self.queued_at else None,
+            "last_retry_at": self.last_retry_at.isoformat() if self.last_retry_at else None,
+            "status": self.status,
+            "replay_count": self.replay_count,
         }
 
 

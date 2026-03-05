@@ -77,4 +77,8 @@ celery_app.conf.beat_schedule = {
         'task': 'api.celery_tasks.check_secrets_age_compliance',
         'schedule': crontab(hour=2, minute=0), # Execute daily at 2:00 AM UTC
     },
+    'dlq-health-check': {
+        'task': 'api.celery_tasks.check_dlq_health',
+        'schedule': 1800.0, # Execute every 30 minutes (Issue #1355)
+    },
 }

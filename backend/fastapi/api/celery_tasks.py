@@ -8,6 +8,7 @@ from api.celery_app import celery_app
 from api.services.export_service_v2 import ExportServiceV2
 from api.services.background_task_service import BackgroundTaskService, TaskStatus
 from api.services.db_service import AsyncSessionLocal
+from api.services.dlq_service import DLQService
 from sqlalchemy import select
 from api.config import get_settings_instance
 from api.models import User, NotificationLog, JournalEntry
@@ -70,9 +71,16 @@ def execute_async_export_task(self, job_id: str, user_id: int, username: str, fo
             # Requeue task with exponential backoff
             self.retry(exc=exc, countdown=backoff_delay)
         except MaxRetriesExceededError:
-            # DLQ behavior: mark as failed and log permanently
-            logger.error(f"Max retries exceeded for job {job_id}. Sending to DLQ (marked as FAILED in DB).")
-            run_async(_mark_task_failed(job_id, str(exc)))
+            # Route to DLQ for visibility and manual recovery
+            logger.error(f"Max retries exceeded for job {job_id}. Routing to DLQ.")
+            run_async(_enqueue_export_to_dlq(
+                task_id=self.request.id,
+                job_id=job_id,
+                user_id=user_id,
+                format=format,
+                options=options,
+                error_msg=str(exc)
+            ))
 
 
 @require_lock(name="job_{job_id}", timeout=60)
@@ -131,6 +139,25 @@ async def _mark_task_failed(job_id: str, error_msg: str):
             db, job_id, TaskStatus.FAILED, error_message=error_msg
         )
 
+async def _enqueue_export_to_dlq(task_id: str, job_id: str, user_id: int, format: str, options: Dict[str, Any], error_msg: str):
+    """Enqueue a failed export task to the DLQ."""
+    async with AsyncSessionLocal() as db:
+        params = {
+            "args": [job_id, user_id, "", format, options],
+            "kwargs": {}
+        }
+        await DLQService.enqueue_to_dlq(
+            db=db,
+            task_id=task_id,
+            task_name="api.celery_tasks.execute_async_export_task",
+            task_type="export_pdf",  # Could be dynamic based on format
+            user_id=user_id,
+            params=params,
+            error_message=error_msg,
+        )
+        # Also mark the background job as FAILED
+        await BackgroundTaskService.update_task_status(db, job_id, TaskStatus.FAILED, error_message=error_msg)
+
 @celery_app.task(bind=True, max_retries=5, acks_late=True, track_started=True)
 def send_notification_task(self, log_id: int, channel: str, user_id: int, content: Dict[str, str]):
     """
@@ -151,8 +178,15 @@ def send_notification_task(self, log_id: int, channel: str, user_id: int, conten
         try:
             self.retry(exc=exc, countdown=backoff_delay)
         except MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for notification {log_id}. Sent to DLQ.")
-            run_async(_mark_notification_failed(log_id, str(exc)))
+            logger.error(f"Max retries exceeded for notification {log_id}. Routing to DLQ.")
+            run_async(_enqueue_notification_to_dlq(
+                task_id=self.request.id,
+                log_id=log_id,
+                channel=channel,
+                user_id=user_id,
+                content=content,
+                error_msg=str(exc)
+            ))
 
 async def _execute_send_notification(log_id: int, channel: str, user_id: int, content: Dict[str, str]):
     from datetime import datetime, UTC
@@ -198,6 +232,25 @@ async def _mark_notification_failed(log_id: int, error_msg: str):
             log.error_message = error_msg
             await db.commit()
 
+async def _enqueue_notification_to_dlq(task_id: str, log_id: int, channel: str, user_id: int, content: Dict[str, str], error_msg: str):
+    """Enqueue a failed notification task to the DLQ."""
+    async with AsyncSessionLocal() as db:
+        params = {
+            "args": [log_id, channel, user_id, content],
+            "kwargs": {}
+        }
+        await DLQService.enqueue_to_dlq(
+            db=db,
+            task_id=task_id,
+            task_name="api.celery_tasks.send_notification_task",
+            task_type="send_notification",
+            user_id=user_id,
+            params=params,
+            error_message=error_msg,
+        )
+        # Also mark the notification log as failed
+        await _mark_notification_failed(log_id, error_msg)
+
 @celery_app.task(bind=True, max_retries=3, acks_late=True, track_started=True)
 def generate_archive_task(self, job_id: str, user_id: int, password: str, include_pdf: bool, include_csv: bool, include_json: bool):
     """
@@ -218,8 +271,36 @@ def generate_archive_task(self, job_id: str, user_id: int, password: str, includ
         try:
             self.retry(exc=exc, countdown=backoff_delay)
         except MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for archive {job_id}.")
-            run_async(_mark_task_failed(job_id, str(exc)))
+            logger.error(f"Max retries exceeded for archive {job_id}. Routing to DLQ.")
+            run_async(_enqueue_archive_to_dlq(
+                task_id=self.request.id,
+                job_id=job_id,
+                user_id=user_id,
+                password=password,
+                include_pdf=include_pdf,
+                include_csv=include_csv,
+                include_json=include_json,
+                error_msg=str(exc)
+            ))
+
+async def _enqueue_archive_to_dlq(task_id: str, job_id: str, user_id: int, password: str, include_pdf: bool, include_csv: bool, include_json: bool, error_msg: str):
+    """Enqueue a failed archive task to the DLQ."""
+    async with AsyncSessionLocal() as db:
+        params = {
+            "args": [job_id, user_id, password, include_pdf, include_csv, include_json],
+            "kwargs": {}
+        }
+        await DLQService.enqueue_to_dlq(
+            db=db,
+            task_id=task_id,
+            task_name="api.celery_tasks.generate_archive_task",
+            task_type="generate_archive",
+            user_id=user_id,
+            params=params,
+            error_message=error_msg,
+        )
+        # Also mark the background job as FAILED
+        await BackgroundTaskService.update_task_status(db, job_id, TaskStatus.FAILED, error_message=error_msg)
 
 async def _execute_archive_generation(job_id: str, user_id: int, password: str, include_pdf: bool, include_csv: bool, include_json: bool):
     async with AsyncSessionLocal() as db:
@@ -282,7 +363,28 @@ def archive_stale_journals_task(self):
         try:
             self.retry(exc=exc, countdown=backoff_delay)
         except MaxRetriesExceededError:
-            logger.error("Max retries exceeded for archive stale journals task.")
+            logger.error("Max retries exceeded for archive stale journals task. Routing to DLQ.")
+            run_async(_enqueue_archive_stale_journals_to_dlq(
+                task_id=self.request.id,
+                error_msg=str(exc)
+            ))
+
+async def _enqueue_archive_stale_journals_to_dlq(task_id: str, error_msg: str):
+    """Enqueue a failed archive stale journals task to the DLQ."""
+    async with AsyncSessionLocal() as db:
+        params = {
+            "args": [],
+            "kwargs": {}
+        }
+        await DLQService.enqueue_to_dlq(
+            db=db,
+            task_id=task_id,
+            task_name="api.celery_tasks.archive_stale_journals",
+            task_type="archive_stale_journals",
+            user_id=None,  # System task
+            params=params,
+            error_message=error_msg,
+        )
 
 async def _execute_archive_stale_journals():
     """Execute the archival of stale journals."""
@@ -675,3 +777,48 @@ async def _send_warning_alert(db, violations: list, stats: dict):
         logger.error(f"Failed to send warning alert: {e}")
         await db.rollback()
 
+
+# ============================================================================
+# Dead-Letter Queue Monitoring (Issue #1355)
+# ============================================================================
+
+@celery_app.task(bind=True, max_retries=2, name="api.celery_tasks.check_dlq_health")
+def check_dlq_health(self):
+    """
+    Periodic task to monitor DLQ health and auto-archive old tasks.
+    Runs every 30 minutes (Issue #1355).
+    """
+    try:
+        run_async(_execute_dlq_health_check())
+        cleanup_memory()
+    except Exception as exc:
+        logger.error(f"DLQ health check failed: {exc}")
+        backoff_delay = 5 ** (self.request.retries + 1)
+        try:
+            self.retry(exc=exc, countdown=backoff_delay)
+        except MaxRetriesExceededError:
+            logger.error("Max retries exceeded for DLQ health check.")
+
+
+async def _execute_dlq_health_check():
+    """Monitor DLQ health and auto-archive old tasks."""
+    async with AsyncSessionLocal() as db:
+        try:
+            # Get DLQ statistics
+            stats = await DLQService.get_dlq_stats(db)
+            
+            # Auto-archive old pending_replay tasks
+            archived = await DLQService.auto_archive_old_tasks(db)
+            
+            logger.info(
+                f"DLQ Health: Total={stats['total_count']}, "
+                f"Pending={stats['pending_replay_count']}, "
+                f"Growth/hr={stats['growth_rate_per_hour']}, "
+                f"Archived={archived}"
+            )
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"DLQ health check failed: {e}")
+            raise
