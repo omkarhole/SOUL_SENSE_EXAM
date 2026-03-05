@@ -94,6 +94,12 @@ DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "critical_threshold_pct": 90.0,
         "warning_threshold_pct": 75.0,
         "safety_margin_pct": 20.0
+    },
+    "ntp_monitoring": {
+        "enabled": True,
+        "drift_tolerance_seconds": 5.0,
+        "ntp_check_interval_seconds": 300,
+        "max_drift_rate": 0.0001
     }
 }
 
@@ -108,7 +114,7 @@ def load_config() -> Dict[str, Any]:
             config = json.load(f)
             # Use deepcopy to avoid mutating the global DEFAULT_CONFIG
             merged = copy.deepcopy(DEFAULT_CONFIG)
-            for section in ["database", "ui", "features", "capacity_monitoring"]:
+            for section in ["database", "ui", "features", "capacity_monitoring", "ntp_monitoring"]:
                 if section in config:
                     merged[section].update(config[section])
             return merged

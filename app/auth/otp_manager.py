@@ -2,6 +2,7 @@ import hashlib
 import secrets
 import logging
 from datetime import datetime, timedelta, UTC
+from app.utils.clock_aware_time import ClockAwareTime, is_expired as check_expiry
 from app.db import safe_db_context
 from app.models import OTP, User
 
@@ -48,7 +49,7 @@ class OTPManager:
         ).order_by(OTP.created_at.desc()).first()
         
         if last_otp:
-            time_since = datetime.now(UTC) - (last_otp.created_at.replace(tzinfo=UTC) if last_otp.created_at.tzinfo is None else last_otp.created_at)
+            time_since = ClockAwareTime.get_current_time() - (last_otp.created_at.replace(tzinfo=UTC) if last_otp.created_at.tzinfo is None else last_otp.created_at)
             if time_since.total_seconds() < cls.RATE_LIMIT_SECONDS:
                 return None, f"Please wait {cls.RATE_LIMIT_SECONDS - int(time_since.total_seconds())}s before requesting a new code."
 
@@ -62,8 +63,8 @@ class OTPManager:
             user_id=user_id,
             code_hash=code_hash,
             purpose=purpose,
-            created_at=datetime.now(UTC),
-            expires_at=datetime.now(UTC) + timedelta(minutes=cls.OTP_EXPIRY_MINUTES),
+            created_at=ClockAwareTime.get_current_time(),
+            expires_at=ClockAwareTime.get_expiry_with_drift_tolerance(cls.OTP_EXPIRY_MINUTES * 60),
             is_used=False,
             attempts=0,
             is_locked=False
@@ -93,7 +94,7 @@ class OTPManager:
             OTP.user_id == user_id,
             OTP.purpose == purpose,
             OTP.is_used == False,
-            OTP.expires_at > datetime.now(UTC)
+            OTP.expires_at > ClockAwareTime.get_current_time()
         ).order_by(OTP.created_at.desc()).first()
         
         if not otp:
@@ -155,7 +156,7 @@ class OTPManager:
             OTP.purpose == purpose,
             OTP.is_used == False,
             OTP.is_locked == False,
-            OTP.expires_at > datetime.now(UTC)
+            OTP.expires_at > ClockAwareTime.get_current_time()
         ).order_by(OTP.created_at.desc()).first()
         
         if not otp:
@@ -186,7 +187,7 @@ class OTPManager:
             OTP.user_id == user_id,
             OTP.purpose == purpose,
             OTP.is_used == False,
-            OTP.expires_at > datetime.now(UTC)
+            OTP.expires_at > ClockAwareTime.get_current_time()
         ).order_by(OTP.created_at.desc()).first()
         
         if not otp:

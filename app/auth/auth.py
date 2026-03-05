@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, UTC, timezone
 from app.db import get_session
 from app.models import User
 from app.security_config import PASSWORD_HASH_ROUNDS, LOCKOUT_DURATION_MINUTES, PASSWORD_HISTORY_LIMIT
+from app.utils.clock_aware_time import ClockAwareTime, is_expired as check_expiry
 from app.models import User, UserSession
 from app.security_config import PASSWORD_HASH_ROUNDS, LOCKOUT_DURATION_MINUTES
 from app.services.audit_service import AuditService
@@ -264,7 +265,7 @@ class AuthManager:
     def is_logged_in(self):
         if self.current_user is None:
             return False
-        if self.session_expiry and datetime.now(UTC) > self.session_expiry:
+        if self.session_expiry and check_expiry(self.session_expiry):
             self.logout_user()
             return False
         return True
@@ -285,9 +286,10 @@ class AuthManager:
         return True
 
     def _generate_session_token(self):
-        """Generate secure session token"""
+        """Generate secure session token with clock-aware expiry"""
         self.session_token = secrets.token_urlsafe(32)
-        self.session_expiry = datetime.now(UTC) + timedelta(hours=24)
+        # Use drift-tolerant expiry time to handle NTP synchronization issues
+        self.session_expiry = ClockAwareTime.get_expiry_with_drift_tolerance(24 * 60 * 60)
 
     def _is_locked_out(self, username):
         """Check if user is locked out based on recent failed attempts in DB with progressive lockout."""
