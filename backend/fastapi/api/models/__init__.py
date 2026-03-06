@@ -1431,6 +1431,69 @@ class BackgroundJob(Base):
         }
 
 
+class BackfillJob(Base):
+    """
+    Track backfill operations during migrations with observability standard.
+    
+    This model provides:
+    - Migration data quality tracking
+    - Performance metrics and audit trail
+    - Data integrity validation with checksums
+    - Rollback capability and safe deployment
+    """
+    __tablename__ = 'backfill_jobs'
+    __table_args__ = (
+        Index('idx_backfill_migration_status', 'migration_version', 'status'),
+        Index('idx_backfill_created', 'created_at'),
+    )
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    backfill_id = Column(String(36), unique=True, nullable=False, index=True)
+    job_type = Column(String(100), nullable=False)  # e.g., age_group_backfill
+    migration_version = Column(String(50), nullable=False, index=True)
+    status = Column(String(20), default='pending', nullable=False)  # pending, in_progress, completed, failed
+    
+    # Metrics and tracking
+    records_processed = Column(Integer, default=0, nullable=False)
+    records_failed = Column(Integer, default=0, nullable=False)
+    execution_time_ms = Column(Float, default=0.0, nullable=False)
+    success_rate = Column(Float, default=0.0, nullable=False)
+    
+    # Data integrity validation
+    checksum_before = Column(String(64), nullable=True)  # SHA-256 before backfill
+    checksum_after = Column(String(64), nullable=True)   # SHA-256 after backfill
+    
+    # Error and rollback tracking
+    error_details = Column(Text, nullable=True)
+    rollback_capable = Column(Boolean, default=True, nullable=False)
+    
+    # Metadata and audit trail
+    job_metadata = Column(Text, nullable=True)  # JSON string
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    
+    def to_dict(self):
+        """Convert to dictionary for API responses."""
+        import json
+        return {
+            "backfill_id": self.backfill_id,
+            "job_type": self.job_type,
+            "migration_version": self.migration_version,
+            "status": self.status,
+            "records_processed": self.records_processed,
+            "records_failed": self.records_failed,
+            "execution_time_ms": self.execution_time_ms,
+            "success_rate": self.success_rate,
+            "error_details": self.error_details,
+            "rollback_capable": self.rollback_capable,
+            "job_metadata": json.loads(self.job_metadata) if self.job_metadata else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
 # ============================================================================
 # Dead-Letter Queue Models (Issue #1355)
 # ============================================================================
