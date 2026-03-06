@@ -1,0 +1,250 @@
+{
+  "registry_version": "1.0",
+  "created_at": "2026-03-06T16:01:50.171957Z",
+  "last_updated": "2026-03-06T16:01:50.171957Z",
+  "migrations": [
+    {
+      "migration_id": "026c42076d07",
+      "filename": "026c42076d07_add_session_id_to_scores_and_responses.py",
+      "content_hash": "82ed99b532c838ed1ebb66e4c09d424807508db0be1a49685d24edd2a81b236d",
+      "file_size": 1454,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "0394250e44ad",
+      "filename": "0394250e44ad_pr1_foundation.py",
+      "content_hash": "ad65d3d3cf8358c81c2839ca9764d9d981124573f5446604939b5995727c6d49",
+      "file_size": 3940,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "1bbd171978ec",
+      "filename": "1bbd171978ec_add_device_fingerprinting_to_sessions.py",
+      "content_hash": "c18bfb34629ea8430ccd46c0146a55466aa7ceb0e6a54b018f5397ac7b9c21bf",
+      "file_size": 2891,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "1fc597e57c19",
+      "filename": "1fc597e57c19_add_user_strengths_table.py",
+      "content_hash": "e986b9f91e1e583680862fa4f4573880fe57654fb7284e7b0a9b484862ac9e4d",
+      "file_size": 1990,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "20260227102116",
+      "filename": "20260227102116_normalize_score_response_user_id_fk.py",
+      "content_hash": "705c6e058e65d96ee0e8539706d881979f077dbe14b58272909c561381fbaa70",
+      "file_size": 1925,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "20260227",
+      "filename": "20260227_160145_add_performance_indexes.py",
+      "content_hash": "619b4f0935e3dd65785b3711a501fb4a59c6c4ea5039d27b60a5994ffac54ea8",
+      "file_size": 11084,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "20260301",
+      "filename": "20260301_093000_normalize_users_created_at_utc_iso.py",
+      "content_hash": "5cc3ad5e741756f7b9701a5b7aea8d17ac1cd89cbf5d7f1b776e1cf1f3b16c99",
+      "file_size": 2407,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "28f7f5014a54",
+      "filename": "28f7f5014a54_add_tags_to_journal_entries.py",
+      "content_hash": "e451485cd4c6eaab8568fa2c18e992a74dc1020f210103c63f186ab3556c5284",
+      "file_size": 603,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "2eaa9d975b79",
+      "filename": "2eaa9d975b79_add_personal_profiles_table.py",
+      "content_hash": "9e8ee34e51e3a9334a20daad1709ed4467d4e2b992718b0f9dcd0a37995ded39",
+      "file_size": 5609,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "33d85e6f18ff",
+      "filename": "33d85e6f18ff_add_medical_profiles.py",
+      "content_hash": "cfe5aa7976c09b8441775ded8c72d1640d5b9bcab2eb45336f4ef4d07b5b6e85",
+      "file_size": 1718,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "49d6f6cd21b6",
+      "filename": "49d6f6cd21b6_add_unique_constraint_user_question_.py",
+      "content_hash": "19332c233a7e3f00243ee303998687b517c8f90ea58ba4039fcc1e9b5592fd7d",
+      "file_size": 935,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "51f39ae2a4d0",
+      "filename": "51f39ae2a4d0_merge_multiple_heads.py",
+      "content_hash": "3d0a59ca41e21b4893217f4b48b97e65bd280c77d38a3f2c2fb011dc7e7cd028",
+      "file_size": 658,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "64a9bde24d3d",
+      "filename": "64a9bde24d3d_add_profile_enhanced_columns.py",
+      "content_hash": "157c04d2dbb3161bf3c7a0e478748482873c0b7419eeedb5fbcc27a83abe2b14",
+      "file_size": 1758,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "679f6276cf18",
+      "filename": "679f6276cf18_add_soft_delete_fields.py",
+      "content_hash": "21f5d7027864236622bff8e319a6826001098356e0d7d197ddd3b59978c0ca61",
+      "file_size": 2360,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "9883f3a97d37",
+      "filename": "9883f3a97d37_merge_heads_before_device_fingerprinting.py",
+      "content_hash": "6a320d016d420860810b064f7279583f26c79e56c9ce18289f7fa468f78ae7b1",
+      "file_size": 654,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "a1b2c3d4e5f6",
+      "filename": "a1b2c3d4e5f6_add_step_up_tokens_table.py",
+      "content_hash": "fe43937d66337fff17505afd33e551420325708626acee0ecb79b7bc29a0fa88",
+      "file_size": 2174,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "a7b8c9d0e1f2",
+      "filename": "a7b8c9d0e1f2_add_wave2_missing_columns.py",
+      "content_hash": "ec1485a595e89c18555e041e0bf8e87e1af315033d5c0ae178e8fec0f68d86f4",
+      "file_size": 3967,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "b33b18452387",
+      "filename": "b33b18452387_initial_schema.py",
+      "content_hash": "21e55ae8166585d144e711c4772e1463536be89e9a710fa465a365fe2e0cfe86",
+      "file_size": 5322,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "bb3da7500d82",
+      "filename": "bb3da7500d82_add_support_system_fields.py",
+      "content_hash": "a43ebb74bbd1806de09485cef2e36ecb3b65c81bc763366abadef35f30d37923",
+      "file_size": 1376,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "c0d9a527bd0e",
+      "filename": "c0d9a527bd0e_enhance_audit_logs_schema.py",
+      "content_hash": "bd2372182aabbc4304b0d9e2a9019b3870574574d9d2f8fc3f7f9aff435d686e",
+      "file_size": 5586,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "c62bcfa45980",
+      "filename": "c62bcfa45980_add_daily_metrics_to_journal.py",
+      "content_hash": "3a5555151deee94c91ee64a844589837eadd323bee302c1801d1fd1d3be57c74",
+      "file_size": 11816,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "cd7e021130c1",
+      "filename": "cd7e021130c1_add_journal_v2_metrics.py",
+      "content_hash": "b8465cbf96c0fbf924b86fe839c9ee4e266b8ea2bee506bbb19fab2eced41ca1",
+      "file_size": 1213,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "d108d0b41e08",
+      "filename": "d108d0b41e08_add_constraint_for_answer_scale.py",
+      "content_hash": "1e3059ca8c4b41ac45c7130e5c8288b0ed7006c25954b790b712232ef2d420a0",
+      "file_size": 1130,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "e4f5a6b7c8d9",
+      "filename": "e4f5a6b7c8d9_add_advanced_analytics_tables.py",
+      "content_hash": "d4ef03492800b6217b5e7c0dafde661e1ec67f836fd6eb44da68583cccec7b9b",
+      "file_size": 4605,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "ec4851e5e16c",
+      "filename": "ec4851e5e16c_add_data_usage_consent_fields_to_user_.py",
+      "content_hash": "4bd0c763ab3d5a6b7cd5092bb011bd5aab6381a635b96e9987c2551a1674e415",
+      "file_size": 1213,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "f0e1d2c3b4a5",
+      "filename": "f0e1d2c3b4a5_add_environment_separation_columns.py",
+      "content_hash": "3b24b6070888105c30f8dfc006251ace3d4942ad910a64ad781de4e45f2b180b",
+      "file_size": 2659,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    },
+    {
+      "migration_id": "f62984ab805f",
+      "filename": "f62984ab805f_feat_all_profile_gaps.py",
+      "content_hash": "cbab035258312f458f9684b1955a0d9bb760b97f133cfa7e1bae465d564e32d9",
+      "file_size": 11001,
+      "created_at": "2026-03-06T16:01:50.167465Z",
+      "last_verified": "2026-03-06T16:01:50.167465Z",
+      "status": "valid"
+    }
+  ]
+}
