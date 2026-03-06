@@ -8,6 +8,13 @@ import sys
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import migration checksum registry
+try:
+    from app.infra.migration_checksum_registry import ChecksumRegistry
+    CHECKSUM_REGISTRY_AVAILABLE = True
+except ImportError:
+    CHECKSUM_REGISTRY_AVAILABLE = False
+
 # Import your models
 try:
     from backend.fastapi.api.models import Base
@@ -29,8 +36,40 @@ from backend.fastapi.api.config import get_settings_instance
 settings = get_settings_instance()
 DATABASE_URL = settings.database_url
 
+
+def verify_migration_integrity() -> None:
+    """Verify migration file integrity before running migrations."""
+    if not CHECKSUM_REGISTRY_AVAILABLE:
+        return
+
+    try:
+        migrations_dir = os.path.dirname(os.path.abspath(__file__))
+        registry = ChecksumRegistry(migrations_dir=migrations_dir)
+        result = registry.verify_all_migrations()
+
+        if not result.passed:
+            raise RuntimeError(
+                f"Migration integrity check failed: "
+                f"{result.modified_count} modified, {result.missing_count} missing. "
+                f"Details: {result.error_message}"
+            )
+
+        if result.total_migrations > 0:
+            import logging
+            log = logging.getLogger(__name__)
+            log.info(f"✓ Migration integrity verified: {result.valid_count}/{result.total_migrations}")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.warning(f"Migration integrity check skipped: {e}")
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
+    verify_migration_integrity()
+    
     url = DATABASE_URL # Use app config
     context.configure(
         url=url,
@@ -44,6 +83,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    verify_migration_integrity()
     
     # Logic to support both Tests (overridden config) and App (app.config)
     # Check if we are running in a test environment
